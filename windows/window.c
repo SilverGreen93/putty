@@ -246,6 +246,7 @@ static void win_seat_set_trust_status(Seat *seat, bool trusted);
 static bool win_seat_can_set_trust_status(Seat *seat);
 static bool win_seat_get_cursor_position(Seat *seat, int *x, int *y);
 static bool win_seat_get_window_pixel_size(Seat *seat, int *x, int *y);
+static void change_font_size(WinGuiSeat *wgs, int dec);
 
 static const SeatVtable win_seat_vt = {
     .output = win_seat_output,
@@ -3435,6 +3436,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                                    TO_CHR_Y(p.y), shift_pressed,
                                    control_pressed, is_alt_pressed());
                     } /* else: not sure when this can fail */
+                } else if (control_pressed) {
+                    /* Change font size when mouse wheel is turned */
+                    change_font_size(wgs, MBT_WHEEL_UP == b ? 1 : -1);
                 } else if (message != WM_MOUSEHWHEEL) {
                     /* trigger a scroll */
                     term_scroll(wgs->term, 0,
@@ -4499,6 +4503,11 @@ static int TranslateKey(WinGuiSeat *wgs, UINT message, WPARAM wParam,
             *p++ = 26;
             *p++ = 0;
             return -2;
+        }
+        /* Control-0 resets font size to default */
+        if (shift_state == 2 && wParam == '0') {
+            change_font_size(wgs, 0);
+            return 0;
         }
         /* Control-2 to Control-8 are special */
         if (shift_state == 2 && wParam >= '2' && wParam <= '8') {
@@ -5946,4 +5955,33 @@ static bool win_seat_get_window_pixel_size(Seat *seat, int *x, int *y)
     *x = r.right - r.left;
     *y = r.bottom - r.top;
     return true;
+}
+
+static void change_font_size(WinGuiSeat *wgs, int dec)
+{
+    static int original_fontsize = -1;
+    FontSpec *fontspec = conf_get_fontspec(wgs->conf, CONF_font);
+
+    if (original_fontsize < 0) {
+        original_fontsize = fontspec->height;
+    }
+
+    if (dec == 0) {
+        fontspec->height = original_fontsize;
+    } else {
+        fontspec->height = fontspec->height + dec;
+
+        if (fontspec->height <= 0) {
+            fontspec->height = 1;
+        }
+    }
+
+    conf_set_fontspec(wgs->conf, CONF_font, fontspec);
+
+    term_size(wgs->term,
+              conf_get_int(wgs->conf, CONF_height),
+              conf_get_int(wgs->conf, CONF_width),
+              conf_get_int(wgs->conf, CONF_savelines));
+
+    reset_window(wgs, 2);
 }
