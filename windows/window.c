@@ -3436,10 +3436,40 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                                    control_pressed, is_alt_pressed());
                     } /* else: not sure when this can fail */
                 } else if (message != WM_MOUSEHWHEEL) {
+                    /* If the wheel accumulator has multiples of the wheel delta, deal with it in one scroll call */
+                    /* This fixes laggy scrolling */
+                    int multiple = 1;
+
+                    if (abs(wgs->wheel_accumulator) >= WHEEL_DELTA) {
+                        multiple = abs(wgs->wheel_accumulator) / WHEEL_DELTA;
+
+                        if (wgs->wheel_accumulator > 0) {
+                            wgs->wheel_accumulator -= multiple * WHEEL_DELTA;
+                        } else {
+                            wgs->wheel_accumulator += multiple * WHEEL_DELTA;
+                        }
+
+                        /* We started with a 1x already. Accounting for that here to make scrolling more smooth */
+                        /* Square the multiple value so that fast wheels scrolls more */
+                        multiple++;
+                        multiple *= multiple;
+                    }
+
+                    /* Determine how much to scroll */
+                    /* -1 = half screen, -2 = full screen, any positive value is the number of lines to scroll */
+                    int conf_scroll = conf_get_int(wgs->conf, CONF_scrolllines);
+                    int scrollLines = conf_scroll == -1 ? wgs->term->rows / 2
+                        : conf_scroll == -2 ? wgs->term->rows
+                        : conf_scroll < -2 ? 3
+                        : conf_scroll;
+
+                    /* account for the multiples from the wheel accumulator */
+                    scrollLines *= multiple;
+
                     /* trigger a scroll */
                     term_scroll(wgs->term, 0,
                                 b == MBT_WHEEL_UP ?
-                                -wgs->term->rows / 2 : wgs->term->rows / 2);
+                                -scrollLines : scrollLines);
                 }
             }
             return 0;

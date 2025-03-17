@@ -702,6 +702,11 @@ CONF_OPTION(wintitle, /* initial window title */
     SAVE_KEYWORD("WinTitle"),
 )
 /* Terminal options */
+CONF_OPTION(scrolllines,
+    VALUE_TYPE(INT),
+    DEFAULT_INT(3),
+    SAVE_KEYWORD("LinesAtAScroll"),
+)
 CONF_OPTION(savelines,
     VALUE_TYPE(INT),
     DEFAULT_INT(2000),
