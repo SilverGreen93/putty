@@ -2231,9 +2231,14 @@ void setup_config_box(struct controlbox *b, bool midsession,
 
     s = ctrl_getset(b, "Window", "scrollback",
                     "Control the scrollback in the window");
-    ctrl_editbox(s, "Lines of scrollback", 's', 50,
+    ctrl_editbox(s, "Lines of scrollback:", 's', 50,
                  HELPCTX(window_scrollback),
                  conf_editbox_handler, I(CONF_savelines), ED_INT);
+    ctrl_editbox(s, "Lines per scroll wheel turn:", 'l', 50,
+                 HELPCTX(window_scrollback),
+                 conf_editbox_handler, I(CONF_scrolllines), ED_INT);
+    ctrl_text(s, "\t\t\tUse -1 for half screen, -2 full screen",
+              HELPCTX(window_scrollback));
     ctrl_checkbox(s, "Display scrollbar", 'd',
                   HELPCTX(window_scrollback),
                   conf_checkbox_handler, I(CONF_scrollbar));
