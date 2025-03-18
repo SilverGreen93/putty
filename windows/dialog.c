@@ -372,9 +372,10 @@ static INT_PTR CALLBACK AboutProc(HWND hwnd, UINT msg,
         sfree(str);
         char *buildinfo_text = buildinfo("\r\n");
         char *text = dupprintf(
-            "%s\r\n\r\n%s\r\n\r\n%s\r\n\r\n%s",
+            "%s\r\n\r\n%s\r\n\r\n%s\r\n\r\n%s\r\n%s",
             appname, ver, buildinfo_text,
-            "\251 " SHORT_COPYRIGHT_DETAILS ". All rights reserved.");
+            "\251 " SHORT_COPYRIGHT_DETAILS ". All rights reserved.",
+            "Plus version by SilverGreen93");
         sfree(buildinfo_text);
         SetDlgItemText(hwnd, IDA_TEXT, text);
         MakeDlgItemBorderless(hwnd, IDA_TEXT);
@@ -398,7 +399,7 @@ static INT_PTR CALLBACK AboutProc(HWND hwnd, UINT msg,
           case IDA_WEB:
             /* Load web browser */
             ShellExecute(hwnd, "open",
-                         "https://www.chiark.greenend.org.uk/~sgtatham/putty/",
+                         "https://github.com/SilverGreen93/putty",
                          0, 0, SW_SHOWDEFAULT);
             return 0;
         }
