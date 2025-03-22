@@ -36,4 +36,4 @@ To request new features or report any found issues, use the Issues tab.
 
 MIT
 
-For additional License information please read the LICENCE included with the download
+For additional License information please read the LICENSE.txt included with the download
