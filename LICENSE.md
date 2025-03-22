@@ -3,6 +3,8 @@ MIT License
 Copyright (c) 2025 SilverGreen93
 Copyright (c) 1997 – 2025 Simon Tatham
 
+PuTTY is copyright 1997-2025 Simon Tatham.
+
 Portions copyright Robert de Bath, Joris van Rantwijk, Delian
 Delchev, Andreas Schultz, Jeroen Massar, Wez Furlong, Nicolas Barry,
 Justin Bradford, Ben Harris, Malcolm Smith, Ahmad Khalifa, Markus
