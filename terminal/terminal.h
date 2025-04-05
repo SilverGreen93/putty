@@ -16,6 +16,8 @@ struct beeptime {
 #define TRUST_SIGIL_WIDTH 3
 #define TRUST_SIGIL_CHAR 0xDFFE
 
+#define SEPARATOR_LINE "\x0D\x0A────────────────────────────────────────────────────────────────\x0D\x0A"
+
 typedef struct {
     int y, x;
 } pos;

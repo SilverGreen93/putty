@@ -7940,7 +7940,7 @@ static inline SeatPromptResult signal_prompts_t(Terminal *term, prompts_t *p,
 }
 
 /* Tiny wrapper to make it easier to write lots of little strings */
-static inline void term_write(Terminal *term, ptrlen data)
+void term_write(Terminal *term, ptrlen data)
 {
     term_data(term, data.ptr, data.len);
 }

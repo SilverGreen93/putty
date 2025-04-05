@@ -1172,14 +1172,23 @@ static void wintw_set_raw_mouse_mode_pointer(TermWin *tw, bool activate)
 }
 
 /*
- * Print a message box and close the connection.
+ * Print an error message and close the connection.
  */
 static void win_seat_connection_fatal(Seat *seat, const char *msg)
 {
     WinGuiSeat *wgs = container_of(seat, WinGuiSeat, seat);
     char *title = dupprintf("%s Fatal Error", appname);
     show_mouseptr(wgs, true);
-    MessageBox(wgs->term_hwnd, msg, title, MB_ICONERROR | MB_OK);
+    /* Do not show MessageBox anymore, instead show error information in terminal */
+    /* MessageBox(wgs->term_hwnd, msg, title, MB_ICONERROR | MB_OK); */
+    term_write(wgs->term, ptrlen_from_asciz(SEPARATOR_LINE));
+    term_write(wgs->term, PTRLEN_LITERAL("\x20"));
+    term_write(wgs->term, ptrlen_from_asciz(title));
+    term_write(wgs->term, PTRLEN_LITERAL("\x07\x0D\x0A\x20"));
+    term_write(wgs->term, ptrlen_from_asciz(msg));
+    term_write(wgs->term, PTRLEN_LITERAL("\x0D\x0A"));
+    term_write(wgs->term, ptrlen_from_asciz(" Use 'Restart session' to try to reconnect"));
+    term_write(wgs->term, ptrlen_from_asciz(SEPARATOR_LINE));
     sfree(title);
 
     if (conf_get_int(wgs->conf, CONF_close_on_exit) == FORCE_ON)
