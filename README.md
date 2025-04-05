@@ -30,6 +30,12 @@ cmake .
 cmake --build .
 ```
 
+Clean instructions:
+
+```
+cmake --build . --target clean
+```
+
 To request new features or report any found issues, use the Issues tab.
 
 ## License
