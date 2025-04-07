@@ -18,6 +18,18 @@ In addition to all features in PuTTY, the following were added:
 - The number of scrolled lines can be customized per mouse scroll wheel tick to offer a more smooth scrolling experience. See Window settings for configuration.
 - Connection errors now display in the terminal instead of a separate message box, to prevent user disruption when having multiple terminals opened.
 
+## Colour themes
+
+The PuTTY Plus release comes with 3 colour themes available in a separate [registry file](putty_themes.reg):
+
+- Color server (included also in the Default Settings)
+- Green console
+- Orange console
+
+When installing the themes, they will overwrite any existing PuTTY themes with the same name.
+
+The recomended font for the terminal is [JetBrains Mono](https://www.jetbrains.com/lp/mono/).
+
 ## Building and issue tracking
 
 The project was built with `cmake` under MSYS2 MINGW64 on Windows.
