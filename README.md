@@ -28,7 +28,7 @@ The PuTTY Plus release comes with 3 colour themes available in a separate [regis
 
 When installing the themes, they will overwrite any existing PuTTY themes with the same name.
 
-The recomended font for the terminal is [JetBrains Mono](https://www.jetbrains.com/lp/mono/).
+The recomended font for the terminal is [JetBrains Mono](https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.zip).
 
 ## Building and issue tracking
 
