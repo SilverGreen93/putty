@@ -32,7 +32,12 @@ The recomended font for the terminal is [JetBrains Mono](https://github.com/ryan
 
 ## Building and issue tracking
 
-The project was built with `cmake` under MSYS2 MINGW64 on Windows.
+The project was built with `cmake` on Windows using the following tools:
+```
+-- Building for: Visual Studio 17 2022
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.26200.
+-- The C compiler identification is MSVC 19.44.35223.0
+```
 
 The `plus` branch is the main branch of this project. The branch called `main` is an exact copy of Simon's PuTTY repository.
 
@@ -40,7 +45,7 @@ Build instructions:
 
 ```
 cmake .
-cmake --build .
+cmake --build . --config Debug
 ```
 
 Clean instructions:
