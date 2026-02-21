@@ -2129,8 +2129,15 @@ static void exit_callback(void *vctx)
              * we should not generate this informational one. */
             if (exitcode != INT_MAX) {
                 show_mouseptr(wgs, true);
-                MessageBox(wgs->term_hwnd, "Connection closed by remote host",
-                           appname, MB_OK | MB_ICONINFORMATION);
+                /* Do not show MessageBox anymore, instead show error information in terminal */
+                /* MessageBox(wgs->term_hwnd, "Connection closed by remote host",
+                 *            appname, MB_OK | MB_ICONINFORMATION); */
+                term_write(wgs->term, ptrlen_from_asciz(SEPARATOR_LINE));
+                term_write(wgs->term, PTRLEN_LITERAL("\x07\x20"));
+                term_write(wgs->term, ptrlen_from_asciz("Connection closed by remote host"));
+                term_write(wgs->term, PTRLEN_LITERAL("\x0D\x0A"));
+                term_write(wgs->term, ptrlen_from_asciz(" Use 'Restart session' to try to reconnect"));
+                term_write(wgs->term, ptrlen_from_asciz(SEPARATOR_LINE));
             }
         }
     }
