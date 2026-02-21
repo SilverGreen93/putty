@@ -7400,6 +7400,7 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                 wheel = false;
                 break;
               default:
+                unlineptr(ldata); /* Added for PuTTY-url */
                 return;
             }
             if (wheel) {
@@ -7407,8 +7408,10 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                  * MA_CLICK actions, and we don't try to keep track of
                  * the buttons being 'pressed' (since without matching
                  * click/release pairs that's pointless). */
-                if (a != MA_CLICK)
+                if (a != MA_CLICK) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
             } else switch (a) {
               case MA_DRAG:
                 if (term->xterm_mouse == 1) {
@@ -7419,12 +7422,16 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                 break;
               case MA_MOVE:    // mouse move without buttons
                 assert( braw == MBT_NOTHING && bcooked == MBT_NOTHING  );
-                if (term->xterm_mouse < 3)
+                if (term->xterm_mouse < 3) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
 
                 if (selpoint.x == term->raw_mouse_reported_x &&
-                    selpoint.y == term->raw_mouse_reported_y)
+                    selpoint.y == term->raw_mouse_reported_y) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
 
                 term->raw_mouse_reported_x = x;
                 term->raw_mouse_reported_y = y;
@@ -7445,6 +7452,7 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                 term->mouse_is_down = braw;
                 break;
               default:
+                unlineptr(ldata); /* Added for PuTTY-url */
                 return;
             }
             if (shift)
@@ -7566,6 +7574,7 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
              * further drags, and wait for the user to click in the
              * window again properly if they want to select.
              */
+            unlineptr(ldata); /* Added for PuTTY-url */
             return;
         }
         if (term->selstate == ABOUT_TO && poseq(term->selanchor, selpoint)) {
@@ -7656,6 +7665,8 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                    )) {
         term_request_paste(term, term->mouse_paste_clipboard);
     }
+
+    unlineptr(ldata); /* Added for PuTTY-url */
 
     /*
      * Since terminal output is suppressed during drag-selects, we
