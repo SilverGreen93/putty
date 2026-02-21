@@ -1291,3 +1291,35 @@ CONF_OPTION(winclass,
     DEFAULT_STR(""),
     SAVE_KEYWORD("WindowClass"),
 )
+
+/* PuTTY-url settings */
+CONF_OPTION(url_ctrl_click,
+    VALUE_TYPE(BOOL),
+    DEFAULT_BOOL(false),
+    SAVE_KEYWORD("HyperlinkUseCtrlClick"),
+)
+CONF_OPTION(url_underline,
+    VALUE_TYPE(INT),
+    DEFAULT_INT(1),
+    SAVE_KEYWORD("HyperlinkUnderline"),
+    STORAGE_ENUM(urlhack_underline),
+)
+CONF_OPTION(url_defbrowser,
+    VALUE_TYPE(BOOL),
+    DEFAULT_BOOL(true),
+    SAVE_KEYWORD("HyperlinkBrowserUseDefault"),
+)
+CONF_OPTION(url_defregex,
+    VALUE_TYPE(BOOL),
+    DEFAULT_BOOL(true),
+    SAVE_KEYWORD("HyperlinkRegularExpressionUseDefault"),
+)
+CONF_OPTION(url_browser,
+    VALUE_TYPE(FILENAME),
+    SAVE_KEYWORD("HyperlinkBrowser"),
+)
+CONF_OPTION(url_regex,
+    VALUE_TYPE(STR),
+    DEFAULT_STR(URLHACK_DEFAULT_REGEX),
+    SAVE_KEYWORD("HyperlinkRegularExpression"),
+)

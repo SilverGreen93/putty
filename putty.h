@@ -3,6 +3,7 @@
 
 #include <stddef.h>                    /* for wchar_t */
 #include <limits.h>                    /* for INT_MAX */
+#include "urlhack.h" /* make URLHACK_DEFAULT_REGEX available to conf.h */
 
 /*
  * Declared before including platform.h, because that will refer to it
@@ -17,6 +18,7 @@ typedef enum {
     FILTER_KEY_FILES, /* .ppk */
     FILTER_DYNLIB_FILES, /* whatever the host platform uses as shared libs */
     FILTER_SOUND_FILES, /* whatever kind of sound file we can use as bell */
+    FILTER_EXECUTABLE_FILES, /* PuTTY-url: executable files */
 } FilereqFilter;
 
 #include "defs.h"
@@ -273,6 +275,23 @@ extern const int colour_indices_oscp_to_osc4[OSCP_NCOLOURS];
 #define ATTR_DEFFG   (OSC4_COLOUR_fg << ATTR_FGSHIFT)
 #define ATTR_DEFBG   (OSC4_COLOUR_bg << ATTR_BGSHIFT)
 #define ATTR_DEFAULT (ATTR_DEFFG | ATTR_DEFBG)
+
+/*
+ * PuTTY-url
+ * Hyperlink: define
+ */
+#define CHAR_MASK    0x000000FFUL
+
+/*
+ * PuTTY-url
+ * Hyperlink: Underline settings
+ */
+enum {
+    URLHACK_UNDERLINE_ALWAYS,
+    URLHACK_UNDERLINE_HOVER,
+    URLHACK_UNDERLINE_NEVER
+};
+
 
 struct sesslist {
     int nsessions;

@@ -30,6 +30,7 @@
 #include <commctrl.h>
 #include <richedit.h>
 #include <mmsystem.h>
+#include "urlhack.h" /* PuTTY-url */
 
 /* From MSDN: In the WM_SYSCOMMAND message, the four low-order bits of
  * wParam are used by Windows, and should be masked off, so we shouldn't
@@ -205,6 +206,7 @@ static const TermWinVtable windows_termwin_vt = {
 };
 
 static HICON trust_icon = INVALID_HANDLE_VALUE;
+static int urlhack_cursor_is_hand = 0; /* PuTTY-url */
 
 const bool share_can_be_downstream = true;
 const bool share_can_be_upstream = true;
@@ -607,6 +609,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     SetWindowLongPtr(wgs->term_hwnd, GWLP_USERDATA, (LONG_PTR)wgs);
 
+    /* Init for PuTTY-url */
+    urlhack_init();
+
     /*
      * Initialise the fonts, simultaneously correcting the guesses
      * for font_{width,height}.
@@ -791,6 +796,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
      * Set up the initial input locale.
      */
     set_input_locale(wgs, GetKeyboardLayout(0));
+
+    /*
+     * PuTTY-url
+     * Hyperlink: Set the regular expression
+     */
+    if (conf_get_bool(wgs->term->conf, CONF_url_defregex) == false) {
+        urlhack_set_regular_expression(conf_get_str(wgs->term->conf, CONF_url_regex));
+    }
 
     /*
      * Finally show the window!
@@ -1002,6 +1015,8 @@ static void setup_clipboards(Terminal *term, Conf *conf)
  */
 void cleanup_exit(int code)
 {
+    urlhack_cleanup();
+
     /*
      * Clean up.
      */
@@ -2217,6 +2232,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
     HDC hdc;
     int resize_action;
     WinGuiSeat *wgs = (WinGuiSeat *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    POINT cursor_pt; /* PuTTY-url */
 
     switch (message) {
       case WM_CREATE:
@@ -2439,6 +2455,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             /* Pass new config data to the back end */
             if (wgs->backend)
                 backend_reconfig(wgs->backend, wgs->conf);
+
+            /* PuTTY-url: Reconfigure */
+            if (conf_get_bool(wgs->conf, CONF_url_defregex) == false) {
+                urlhack_set_regular_expression(conf_get_str(wgs->conf, CONF_url_regex));
+            }
+            wgs->term->url_update = TRUE;
+            term_update(wgs->term);
 
             /* Screen size changed ? */
             if (conf_get_int(wgs->conf, CONF_height) !=
@@ -2758,6 +2781,35 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
          * number noise.
          */
         noise_ultralight(NOISE_SOURCE_MOUSEPOS, lParam);
+
+        /*
+         * PuTTY-url
+         * Hyperlink: Change cursor type if hovering over link
+         */
+        if (urlhack_mouse_old_x != TO_CHR_X(X_POS(lParam)) || urlhack_mouse_old_y != TO_CHR_Y(Y_POS(lParam))) {
+            urlhack_mouse_old_x = TO_CHR_X(X_POS(lParam));
+            urlhack_mouse_old_y = TO_CHR_Y(Y_POS(lParam));
+
+            if ((!conf_get_bool(wgs->term->conf, CONF_url_ctrl_click) || urlhack_is_ctrl_pressed()) &&
+                urlhack_is_in_link_region(urlhack_mouse_old_x, urlhack_mouse_old_y)) {
+                    if (urlhack_cursor_is_hand == 0) {
+                        SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)LoadCursor(NULL, IDC_HAND));
+                        urlhack_cursor_is_hand = 1;
+                        term_update(wgs->term); /* Force the terminal to update, otherwise the underline will not show (bug somewhere, this is an ugly fix) */
+                    }
+            } else if (urlhack_cursor_is_hand == 1) {
+                SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)LoadCursor(NULL, IDC_IBEAM));
+                urlhack_cursor_is_hand = 0;
+                term_update(wgs->term); /* Force the terminal to update, see above */
+            }
+
+            /* If mouse jumps from one link directly into another, we need a forced terminal update too */
+            if (urlhack_is_in_link_region(urlhack_mouse_old_x, urlhack_mouse_old_y) != urlhack_current_region) {
+                urlhack_current_region = urlhack_is_in_link_region(urlhack_mouse_old_x, urlhack_mouse_old_y);
+                term_update(wgs->term);
+            }
+        }
+        /* PuTTY-url: END */
 
         if (wParam & (MK_LBUTTON | MK_MBUTTON | MK_RBUTTON) &&
             GetCapture() == hwnd) {
@@ -3242,8 +3294,25 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         return false;
       case WM_KEYDOWN:
-      case WM_SYSKEYDOWN:
-      case WM_KEYUP:
+        /* PuTTY-url: Change cursor if we are in Ctrl+click link mode (spans multiple switch cases) */
+            if (wParam == VK_CONTROL && conf_get_bool(wgs->term->conf, CONF_url_ctrl_click)) {
+                GetCursorPos(&cursor_pt);
+                ScreenToClient(hwnd, &cursor_pt);
+
+                if (urlhack_is_in_link_region(TO_CHR_X(cursor_pt.x), TO_CHR_Y(cursor_pt.y))) {
+                    SetCursor(LoadCursor(NULL, IDC_HAND));
+                    term_update(wgs->term);
+                }
+
+                goto URL_KEY_END;
+            }
+          case WM_SYSKEYDOWN:
+          case WM_KEYUP:
+            if (wParam == VK_CONTROL && conf_get_bool(wgs->term->conf, CONF_url_ctrl_click)) {
+                SetCursor(LoadCursor(NULL, IDC_IBEAM));
+                term_update(wgs->term);
+            }
+URL_KEY_END: /* PuTTY-url: End of code to change cursor when in Ctrl+click link mode */
       case WM_SYSKEYUP:
         /*
          * Add the scan code and keypress timing to the random

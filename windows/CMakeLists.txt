@@ -107,7 +107,7 @@ be_list(putty PuTTY SSH SERIAL OTHERBACKENDS)
 add_dependencies(putty generated_licence_h)
 target_link_libraries(putty
   guiterminal guimisc eventloop sshclient otherbackends settings network crypto
-  utils
+  utils urlhack
   ${platform_libraries})
 set_target_properties(putty PROPERTIES WIN32_EXECUTABLE ON)
 installed_program(putty)
@@ -125,9 +125,9 @@ add_executable(puttytel
   ${CMAKE_SOURCE_DIR}/proxy/nosshproxy.c
   puttytel.rc)
 be_list(puttytel PuTTYtel SERIAL OTHERBACKENDS)
-add_dependencies(puttytel generated_licence_h)
+add_dependencies(puttytel urlhack generated_licence_h)
 target_link_libraries(puttytel
-  guiterminal guimisc eventloop otherbackends settings network utils
+  guiterminal guimisc eventloop otherbackends settings network utils urlhack
   ${platform_libraries})
 set_target_properties(puttytel PROPERTIES WIN32_EXECUTABLE ON)
 installed_program(puttytel)
@@ -164,9 +164,9 @@ if(HAVE_CONPTY)
     ${CMAKE_SOURCE_DIR}/proxy/nosshproxy.c
     pterm.rc)
   be_list(pterm pterm)
-  add_dependencies(pterm generated_licence_h)
+  add_dependencies(pterm generated_licence_h urlhack)
   target_link_libraries(pterm
-    guiterminal guimisc eventloop settings network utils
+    guiterminal guimisc eventloop settings network utils urlhack
     ${platform_libraries})
   set_target_properties(pterm PROPERTIES WIN32_EXECUTABLE ON)
   installed_program(pterm)
@@ -183,6 +183,15 @@ add_executable(test_screenshot
   test/test_screenshot.c)
 target_link_libraries(test_screenshot utils ${platform_libraries})
 
+# urlhack - define before test executables that depend on it
+add_library(re_lib STATIC)
+add_subdirectory(re_lib)
+
+add_library(urlhack STATIC
+  urlhack.c)
+add_dependencies(urlhack re_lib)
+target_link_libraries(urlhack re_lib)
+
 add_executable(test_lineedit
   ${CMAKE_SOURCE_DIR}/test/test_lineedit.c
   ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
@@ -192,7 +201,7 @@ add_executable(test_lineedit
   ${CMAKE_SOURCE_DIR}/stubs/no-timing.c
   no-jump-list.c)
 target_link_libraries(test_lineedit
-  guiterminal settings eventloop utils ${platform_libraries})
+  guiterminal settings eventloop utils urlhack ${platform_libraries})
 
 add_executable(test_terminal
   ${CMAKE_SOURCE_DIR}/test/test_terminal.c
@@ -201,6 +210,6 @@ add_executable(test_terminal
   ${CMAKE_SOURCE_DIR}/stubs/no-timing.c
   no-jump-list.c)
 target_link_libraries(test_terminal
-  guiterminal settings eventloop utils ${platform_libraries})
+  guiterminal settings eventloop utils urlhack ${platform_libraries})
 
 add_sources_from_current_dir(test_conf no-jump-list.c handle-wait.c)

@@ -195,3 +195,13 @@ CONF_ENUM(x11_auth,
     VALUE(X11_MIT, 1),
     VALUE(X11_XDM, 2),
 )
+
+/*
+ * PuTTY-url
+ * Hyperlink underline settings
+ */
+CONF_ENUM(urlhack_underline,
+    VALUE(URLHACK_UNDERLINE_ALWAYS, 0),
+    VALUE(URLHACK_UNDERLINE_HOVER, 1),
+    VALUE(URLHACK_UNDERLINE_NEVER, 2),
+)

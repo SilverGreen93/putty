@@ -112,6 +112,11 @@ static bool do_filereq_a(
             "All Files (*.*)\0*\0\0\0";
         of.lpstrDefExt = ".wav";
         break;
+      case FILTER_EXECUTABLE_FILES: /* PuTTY-url */
+        of.lpstrFilter = "Application (*.exe)\0*.exe\0"
+            "All files (*.*)\0*.*\0\0";
+        of.lpstrDefExt = ".exe";
+        break;
     }
     of.nFilterIndex = 1;
 
