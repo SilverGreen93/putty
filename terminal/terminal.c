@@ -12,6 +12,7 @@
 #include <assert.h>
 #include "putty.h"
 #include "terminal.h"
+#include "urlhack.h" /* PuTTY-url */
 
 #define VT52_PLUS
 
@@ -2071,6 +2072,7 @@ Terminal *term_init(Conf *myconf, struct unicode_data *ucsdata, TermWin *win)
     term->rows = term->cols = -1;
     power_on(term, true);
     term->attr_mask = 0xffffffff;
+    term->url_update = TRUE; /* PuTTY-url */
 
     /* FULL-TERMCHAR */
     term->basic_erase_char.chr = CSET_ASCII | ' ';
@@ -6035,6 +6037,50 @@ static void do_paint(Terminal *term)
     size_t chlen;
     termchar *newline;
 
+    /*
+     * PuTTY-url
+     * Hyperlink: Find visible hyperlinks
+     *
+     * TODO: We should find out somehow that the stuff on screen has changed since last
+     *       paint. How to do it?
+     */
+    int urlhack_underline_always = conf_get_int(term->conf, CONF_url_underline) == URLHACK_UNDERLINE_ALWAYS;
+
+    int urlhack_underline =
+        conf_get_int(term->conf, CONF_url_underline) == URLHACK_UNDERLINE_ALWAYS ||
+        (conf_get_int(term->conf, CONF_url_underline) == URLHACK_UNDERLINE_HOVER && (!conf_get_bool(term->conf, CONF_url_ctrl_click) || urlhack_is_ctrl_pressed())) ? 1 : 0;
+
+    int urlhack_is_link = 0, urlhack_hover_current = 0;
+    int urlhack_toggle_x = term->cols, urlhack_toggle_y = term->rows;
+    int urlhack_region_index = 0;
+    text_region urlhack_region;
+
+    if (term->url_update) {
+        urlhack_reset();
+
+        for (i = 0; i < term->rows; i++) {
+            termline *lp = lineptr(term->disptop + i);
+
+            for (j = 0; j < term->cols; j++) {
+                unsigned long termchr = lp->chars[j].chr;
+                urlhack_putchar(termchr & CHAR_MASK ? (char)(termchr & CHAR_MASK) : ' ');
+            }
+
+            unlineptr(lp);
+        }
+
+        urlhack_go_find_me_some_hyperlinks(term->cols);
+    }
+    urlhack_region = urlhack_get_link_region(urlhack_region_index);
+    urlhack_toggle_x = urlhack_region.x0;
+    urlhack_toggle_y = urlhack_region.y0;
+
+    if (urlhack_underline_always)
+        urlhack_hover_current = 1;
+    else
+        urlhack_hover_current = urlhack_is_in_this_link_region(urlhack_region, urlhack_mouse_old_x, urlhack_mouse_old_y);
+    /* PuTTY-url: END */
+
     chlen = 1024;
     ch = snewn(chlen, wchar_t);
 
@@ -6183,6 +6229,46 @@ static void do_paint(Terminal *term)
             }
             if (j < term->cols-1 && d[1].chr == UCSWIDE)
                 tattr |= ATTR_WIDE;
+
+            /*
+             * PuTTY-url
+             * Hyperlink: Underline link regions if user has configured to do so
+             */
+            if (urlhack_underline) {
+                if (j == urlhack_toggle_x && i == urlhack_toggle_y) {
+                    urlhack_is_link = urlhack_is_link == 1 ? 0 : 1;
+
+                    /* Find next bound for the toggle */
+
+                    if (urlhack_is_link == 1) {
+                        urlhack_toggle_x = urlhack_region.x1;
+                        urlhack_toggle_y = urlhack_region.y1;
+
+                        if (urlhack_toggle_x == term->cols - 1) {
+                            /* Handle special case where link ends at the last char of the row */
+                            urlhack_toggle_y++;
+                            urlhack_toggle_x = 0;
+                        }
+                    } else {
+                        urlhack_region = urlhack_get_link_region(++urlhack_region_index);
+
+                        if (urlhack_underline_always)
+                            urlhack_hover_current = 1;
+                        else
+                            urlhack_hover_current = urlhack_is_in_this_link_region(urlhack_region, urlhack_mouse_old_x, urlhack_mouse_old_y);
+
+                        urlhack_toggle_x = urlhack_region.x0;
+                        urlhack_toggle_y = urlhack_region.y0;
+                    }
+                }
+
+                if (urlhack_is_link == 1 && urlhack_hover_current == 1) {
+                    tattr |= ATTR_UNDER;
+                }
+
+                term->url_update = 0;
+            }
+            /* PuTTY-url: END */
 
             /* Video reversing things */
             if (term->selstate == DRAGGING || term->selstate == SELECTED) {
@@ -6549,6 +6635,7 @@ void term_paint(Terminal *term,
 void term_scroll(Terminal *term, int rel, int where)
 {
     int sbtop = -sblines(term);
+    term->url_update = TRUE; /* PuTTY-url */
 
     term->disptop = (rel < 0 ? 0 : rel > 0 ? sbtop : term->disptop) + where;
     if (term->disptop < sbtop)
@@ -7260,7 +7347,7 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
     }
 
     selpoint.x = x;
-    unlineptr(ldata);
+    /* unlineptr(ldata); Removed for PuTTY-url */
 
     /*
      * If we're in the middle of a selection operation, we ignore raw
@@ -7313,6 +7400,7 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                 wheel = false;
                 break;
               default:
+                unlineptr(ldata); /* Added for PuTTY-url */
                 return;
             }
             if (wheel) {
@@ -7320,22 +7408,30 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                  * MA_CLICK actions, and we don't try to keep track of
                  * the buttons being 'pressed' (since without matching
                  * click/release pairs that's pointless). */
-                if (a != MA_CLICK)
+                if (a != MA_CLICK) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
             } else switch (a) {
               case MA_DRAG:
-                if (term->xterm_mouse == 1)
+                if (term->xterm_mouse == 1) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
                 encstate += 0x20; // motion indicator
                 break;
               case MA_MOVE:    // mouse move without buttons
                 assert( braw == MBT_NOTHING && bcooked == MBT_NOTHING  );
-                if (term->xterm_mouse < 3)
+                if (term->xterm_mouse < 3) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
 
                 if (selpoint.x == term->raw_mouse_reported_x &&
-                    selpoint.y == term->raw_mouse_reported_y)
+                    selpoint.y == term->raw_mouse_reported_y) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
 
                 term->raw_mouse_reported_x = x;
                 term->raw_mouse_reported_y = y;
@@ -7349,11 +7445,14 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                 term->mouse_is_down = 0;
                 break;
               case MA_CLICK:
-                if (term->mouse_is_down == braw)
+                if (term->mouse_is_down == braw) {
+                    unlineptr(ldata); /* Added for PuTTY-url */
                     return;
+                }
                 term->mouse_is_down = braw;
                 break;
               default:
+                unlineptr(ldata); /* Added for PuTTY-url */
                 return;
             }
             if (shift)
@@ -7378,6 +7477,7 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                 sfree(response);
             }
         }
+        unlineptr(ldata); /* Added for PuTTY-url */
         return;
     }
 
@@ -7400,6 +7500,59 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
         term->seltype = default_seltype;
         term->selanchor = selpoint;
         term->selmode = SM_CHAR;
+
+        /*
+         * PuTTY-url
+         * Hyperlink: Check whether the click coordinates are inside link
+         * region, if so -> copy url to temporary buffer and launch it. Delete
+         * the temporary buffer.
+         */
+    } else if (bcooked == MBT_SELECT && a == MA_RELEASE && term->selstate == ABOUT_TO) {
+        deselect(term);
+        term->selstate = NO_SELECTION;
+
+        if ((!conf_get_bool(term->conf, CONF_url_ctrl_click) || (conf_get_bool(term->conf, CONF_url_ctrl_click) && urlhack_is_ctrl_pressed())) && urlhack_is_in_link_region(x, y)) {
+            int i;
+            char *linkbuf = NULL;
+            text_region region = urlhack_get_link_bounds(x, y);
+
+            if (region.y0 == region.y1) {
+                linkbuf = snewn(region.x1 - region.x0 + 2, char);
+
+                for (i = region.x0; i < region.x1; i++) {
+                    linkbuf[i - region.x0] = (char)(ldata->chars[i].chr);
+                }
+
+                linkbuf[i - region.x0] = '\0';
+            }
+            else {
+                termline *urldata = lineptr(region.y0 + term->disptop);
+                int linklen, row = region.y0 + term->disptop;
+
+                linklen = (term->cols - region.x0) +
+                    ((region.y1 - region.y0 - 1) * term->cols) + region.x1 + 1;
+
+                linkbuf = snewn(linklen, char);
+
+                for (i = region.x0; i < linklen + region.x0; i++) {
+                    linkbuf[i - region.x0] = (char)(urldata->chars[i % term->cols].chr);
+
+                    /* Jump to next line? */
+                    if (((i + 1) % term->cols) == 0) {
+                        row++;
+                        urldata = lineptr(row);
+                    }
+                }
+
+                linkbuf[linklen - 1] = '\0';
+                unlineptr(urldata);
+            }
+
+            urlhack_launch_url(!conf_get_bool(term->conf, CONF_url_defbrowser) ? conf_get_filename(term->conf, CONF_url_browser)->cpath : NULL, linkbuf);
+
+            sfree(linkbuf);
+        }
+        /* PuTTY-url: END */
     } else if (bcooked == MBT_SELECT && (a == MA_2CLK || a == MA_3CLK)) {
         deselect(term);
         term->selmode = (a == MA_2CLK ? SM_WORD : SM_LINE);
@@ -7421,10 +7574,13 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
              * further drags, and wait for the user to click in the
              * window again properly if they want to select.
              */
+            unlineptr(ldata); /* Added for PuTTY-url */
             return;
         }
-        if (term->selstate == ABOUT_TO && poseq(term->selanchor, selpoint))
+        if (term->selstate == ABOUT_TO && poseq(term->selanchor, selpoint)) {
+            unlineptr(ldata); /* Added for PuTTY-url */
             return;
+        }
         if (bcooked == MBT_EXTEND && a != MA_DRAG &&
             term->selstate == SELECTED) {
             if (term->seltype == LEXICOGRAPHIC) {
@@ -7509,6 +7665,8 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
                    )) {
         term_request_paste(term, term->mouse_paste_clipboard);
     }
+
+    unlineptr(ldata); /* Added for PuTTY-url */
 
     /*
      * Since terminal output is suppressed during drag-selects, we
@@ -7866,6 +8024,7 @@ static void term_added_data(Terminal *term, bool called_from_term_data)
         term->in_term_out = true;
         term_out(term, called_from_term_data);
         term->in_term_out = false;
+        term->url_update = TRUE; /* PuTTY-url */
     }
 }
 

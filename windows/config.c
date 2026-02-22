@@ -381,4 +381,49 @@ void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
                      HELPCTX(ssh_tunnels_xauthority),
                      conf_filesel_handler, I(CONF_xauthfile));
     }
+
+    /*
+     * PuTTY-url
+     * Hyperlink: The Window/Hyperlinks panel.
+     */
+    ctrl_settitle(b, "Window/Hyperlinks", "Options controlling the behaviour of hyperlinks");
+    s = ctrl_getset(b, "Window/Hyperlinks", "general", "General options for hyperlinks");
+
+    ctrl_radiobuttons(s, "Underline hyperlinks:", 'u', 1,
+                      HELPCTX(no_help),
+                      conf_radiobutton_handler,
+                      I(CONF_url_underline),
+                      "Always", I(URLHACK_UNDERLINE_ALWAYS),
+                      "When hovered upon", I(URLHACK_UNDERLINE_HOVER),
+                      "Never", I(URLHACK_UNDERLINE_NEVER));
+    
+    ctrl_checkbox(s, "Use Ctrl+Click to open hyperlinks", 'l',
+                     HELPCTX(no_help),
+                     conf_checkbox_handler, I(CONF_url_ctrl_click));
+    
+    s = ctrl_getset(b, "Window/Hyperlinks", "browser", "Browser application");
+    
+    ctrl_checkbox(s, "Use the default browser", 'b',
+                     HELPCTX(no_help),
+                     conf_checkbox_handler, I(CONF_url_defbrowser));
+    
+    ctrl_filesel(s, "or specify an application to open hyperlinks with:", 's',
+                 FILTER_EXECUTABLE_FILES, true, "Select executable to open hyperlinks with",
+                 HELPCTX(no_help),
+                 conf_filesel_handler, I(CONF_url_browser));
+    
+    s = ctrl_getset(b, "Window/Hyperlinks", "regexp", "Regular expression");
+    
+    ctrl_checkbox(s, "Use the default regular expression", 'r',
+                  HELPCTX(no_help),
+                  conf_checkbox_handler, I(CONF_url_defregex));
+    
+    ctrl_editbox(s, "or specify your own:", NO_SHORTCUT, 100,
+                 HELPCTX(no_help),
+                 conf_editbox_handler,
+                 I(CONF_url_regex),
+                 ED_STR);
+    
+    ctrl_text(s, "The single white space will be cropped in front of the link, if exists.",
+              HELPCTX(no_help));
 }
