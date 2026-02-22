@@ -15,6 +15,7 @@ Documentation is available at https://www.chiark.greenend.org.uk/~sgtatham/putty
 In addition to all features in PuTTY, the following were added:
 
 - Mouse scroll wheel changes font size when used with Control key. Always active.
+- Clickable URL support. Clickin on a URL will open it in the default browser (configurable).
 - The number of scrolled lines can be customized per mouse scroll wheel tick to offer a more smooth scrolling experience. See Window settings for configuration.
 - Connection errors now display in the terminal instead of a separate message box, to prevent user disruption when having multiple terminals opened.
 
