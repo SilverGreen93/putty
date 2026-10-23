@@ -3440,6 +3440,14 @@ static LRESULT WndProcInner(HWND hwnd, UINT message,
         wgs->dpi_info.new_wnd_rect = *(RECT*)(lParam);
         reset_window(wgs, 3);
         return 0;
+      case WM_DPICHANGED_AFTERPARENT:
+        /* Only top-level windows get WM_DPICHANGED; an embedded child
+         * hears about it here. Reload the fonts at the new DPI and keep
+         * the window size the host gave us. */
+        wgs->dpi_info.cur_dpi.x = wgs->dpi_info.cur_dpi.y = 0;
+        init_dpi_info(wgs);
+        reset_window(wgs, 2);
+        return 0;
       case WM_VSCROLL:
         switch (LOWORD(wParam)) {
           case SB_BOTTOM:
