@@ -1,0 +1,65 @@
+name: Publish Plus release
+
+on:
+  push:
+    tags:
+      - 'PlusR*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          # Full history + tags, so we can find the last upstream tag merged in.
+          fetch-depth: 0
+
+      - name: Work out release name
+        id: name
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"        # e.g. PlusR3
+          R="${TAG#Plus}"                 # e.g. R3
+          # Newest numeric upstream tag merged into this tag's commit, e.g. 0.83
+          BASE="$(git tag --merged HEAD --sort=-v:refname -l '[0-9]*' | head -n 1)"
+          echo "r=${R}" >> "$GITHUB_OUTPUT"
+          echo "zip=PuTTYPlus${R}.zip" >> "$GITHUB_OUTPUT"
+          if [ -n "$BASE" ]; then
+            echo "name=PuTTY Plus ${BASE} ${R}" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+          else
+            # Couldn't work the name out: publish as a draft so it can be
+            # titled by hand.
+            echo "name=PuTTY Plus ${R}" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure
+        # VS generator is multi-config: the Release config is chosen by
+        # --config at build time, so CMAKE_BUILD_TYPE is not needed here.
+        run: cmake -S . -B build
+
+      - name: Build putty
+        run: cmake --build build --config Release --target putty
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item build/Release/putty.exe dist/putty-plus.exe
+          Copy-Item putty_themes.reg, LICENSE.txt dist/
+          Compress-Archive -Path dist/putty-plus.exe, dist/putty_themes.reg, dist/LICENSE.txt `
+                           -DestinationPath "dist/${{ steps.name.outputs.zip }}"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.name.outputs.name }}
+          draft: ${{ steps.name.outputs.draft == 'true' }}
+          files: dist/${{ steps.name.outputs.zip }}
