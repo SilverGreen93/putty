@@ -173,7 +173,8 @@ static LRESULT CALLBACK notify_wndproc(HWND hwnd, UINT msg,
     putty_code_depth++;
     switch (msg) {
       case WM_NETEVENT:
-        winselgui_response(wParam, lParam);   /* only queues a callback */
+      case WM_DONE_WITH_SOCKET:
+        winselgui_response(msg, wParam, lParam); /* only queues a callback */
         break;
       case WM_PD_CALLBACKS:
         callbacks_posted = false;
