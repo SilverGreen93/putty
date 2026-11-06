@@ -449,6 +449,7 @@ struct terminal_tag {
     termline *preedit_termline;
 
     int url_update; /* PuTTY-url */
+    URLHack *urlhack; /* PuTTY-url: per-terminal hyperlink state */
 };
 
 static inline bool in_utf(Terminal *term)

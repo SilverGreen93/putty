@@ -2073,6 +2073,7 @@ Terminal *term_init(Conf *myconf, struct unicode_data *ucsdata, TermWin *win)
     power_on(term, true);
     term->attr_mask = 0xffffffff;
     term->url_update = TRUE; /* PuTTY-url */
+    term->urlhack = urlhack_new(); /* PuTTY-url */
 
     /* FULL-TERMCHAR */
     term->basic_erase_char.chr = CSET_ASCII | ' ';
@@ -2123,6 +2124,7 @@ void term_free(Terminal *term)
             freetermline(term->disptext[i]);
     }
     sfree(term->disptext);
+    urlhack_free(term->urlhack); /* PuTTY-url */
     while (term->beephead) {
         beep = term->beephead;
         term->beephead = beep->next;
@@ -6058,29 +6060,29 @@ static void do_paint(Terminal *term)
     text_region urlhack_region;
 
     if (term->url_update) {
-        urlhack_reset();
+        urlhack_reset(term->urlhack);
 
         for (i = 0; i < term->rows; i++) {
             termline *lp = lineptr(term->disptop + i);
 
             for (j = 0; j < term->cols; j++) {
                 unsigned long termchr = lp->chars[j].chr;
-                urlhack_putchar(termchr & CHAR_MASK ? (char)(termchr & CHAR_MASK) : ' ');
+                urlhack_putchar(term->urlhack, termchr & CHAR_MASK ? (char)(termchr & CHAR_MASK) : ' ');
             }
 
             unlineptr(lp);
         }
 
-        urlhack_go_find_me_some_hyperlinks(term->cols);
+        urlhack_go_find_me_some_hyperlinks(term->urlhack, term->cols);
     }
-    urlhack_region = urlhack_get_link_region(urlhack_region_index);
+    urlhack_region = urlhack_get_link_region(term->urlhack, urlhack_region_index);
     urlhack_toggle_x = urlhack_region.x0;
     urlhack_toggle_y = urlhack_region.y0;
 
     if (urlhack_underline_always)
         urlhack_hover_current = 1;
     else
-        urlhack_hover_current = urlhack_is_in_this_link_region(urlhack_region, urlhack_mouse_old_x, urlhack_mouse_old_y);
+        urlhack_hover_current = urlhack_is_in_this_link_region(urlhack_region, term->urlhack->mouse_old_x, term->urlhack->mouse_old_y);
     /* PuTTY-url: END */
 
     chlen = 1024;
@@ -6254,12 +6256,12 @@ static void do_paint(Terminal *term)
                             urlhack_toggle_x = 0;
                         }
                     } else {
-                        urlhack_region = urlhack_get_link_region(++urlhack_region_index);
+                        urlhack_region = urlhack_get_link_region(term->urlhack, ++urlhack_region_index);
 
                         if (urlhack_underline_always)
                             urlhack_hover_current = 1;
                         else
-                            urlhack_hover_current = urlhack_is_in_this_link_region(urlhack_region, urlhack_mouse_old_x, urlhack_mouse_old_y);
+                            urlhack_hover_current = urlhack_is_in_this_link_region(urlhack_region, term->urlhack->mouse_old_x, term->urlhack->mouse_old_y);
 
                         urlhack_toggle_x = urlhack_region.x0;
                         urlhack_toggle_y = urlhack_region.y0;
@@ -7515,10 +7517,10 @@ void term_mouse(Terminal *term, Mouse_Button braw, Mouse_Button bcooked,
         deselect(term);
         term->selstate = NO_SELECTION;
 
-        if ((!conf_get_bool(term->conf, CONF_url_ctrl_click) || (conf_get_bool(term->conf, CONF_url_ctrl_click) && urlhack_is_ctrl_pressed())) && urlhack_is_in_link_region(x, y)) {
+        if ((!conf_get_bool(term->conf, CONF_url_ctrl_click) || (conf_get_bool(term->conf, CONF_url_ctrl_click) && urlhack_is_ctrl_pressed())) && urlhack_is_in_link_region(term->urlhack, x, y)) {
             int i;
             char *linkbuf = NULL;
-            text_region region = urlhack_get_link_bounds(x, y);
+            text_region region = urlhack_get_link_bounds(term->urlhack, x, y);
 
             if (region.y0 == region.y1) {
                 linkbuf = snewn(region.x1 - region.x0 + 2, char);

@@ -231,7 +231,6 @@ static const TermWinVtable windows_termwin_vt = {
 };
 
 static HICON trust_icon = INVALID_HANDLE_VALUE;
-static int urlhack_cursor_is_hand = 0; /* PuTTY-url */
 
 const bool share_can_be_downstream = true;
 const bool share_can_be_upstream = true;
@@ -542,9 +541,6 @@ bool putty_process_init(HINSTANCE inst, HINSTANCE prev)
         sfree(str);
         return false;
     }
-
-    /* Init for PuTTY-url */
-    urlhack_init();
 
     return true;
 }
@@ -908,9 +904,10 @@ WinGuiSeat *wgs_new(char *cmdline, HWND parent,
      * PuTTY-url
      * Hyperlink: Set the regular expression
      */
-    if (conf_get_bool(wgs->term->conf, CONF_url_defregex) == false) {
-        urlhack_set_regular_expression(conf_get_str(wgs->term->conf, CONF_url_regex));
-    }
+    urlhack_set_regular_expression(
+        wgs->term->urlhack,
+        conf_get_bool(wgs->term->conf, CONF_url_defregex) ?
+        URLHACK_DEFAULT_REGEX : conf_get_str(wgs->term->conf, CONF_url_regex));
 
     /*
      * Finally show the window!
@@ -1189,8 +1186,6 @@ static void setup_clipboards(Terminal *term, Conf *conf)
  */
 void cleanup_exit(int code)
 {
-    urlhack_cleanup();
-
     /*
      * Clean up.
      */
@@ -2693,9 +2688,10 @@ static LRESULT WndProcInner(HWND hwnd, UINT message,
                 backend_reconfig(wgs->backend, wgs->conf);
 
             /* PuTTY-url: Reconfigure */
-            if (conf_get_bool(wgs->conf, CONF_url_defregex) == false) {
-                urlhack_set_regular_expression(conf_get_str(wgs->conf, CONF_url_regex));
-            }
+            urlhack_set_regular_expression(
+                wgs->term->urlhack,
+                conf_get_bool(wgs->conf, CONF_url_defregex) ?
+                URLHACK_DEFAULT_REGEX : conf_get_str(wgs->conf, CONF_url_regex));
             wgs->term->url_update = TRUE;
             term_update(wgs->term);
 
@@ -3036,26 +3032,26 @@ static LRESULT WndProcInner(HWND hwnd, UINT message,
          * PuTTY-url
          * Hyperlink: Change cursor type if hovering over link
          */
-        if (urlhack_mouse_old_x != TO_CHR_X(X_POS(lParam)) || urlhack_mouse_old_y != TO_CHR_Y(Y_POS(lParam))) {
-            urlhack_mouse_old_x = TO_CHR_X(X_POS(lParam));
-            urlhack_mouse_old_y = TO_CHR_Y(Y_POS(lParam));
+        if (wgs->term->urlhack->mouse_old_x != TO_CHR_X(X_POS(lParam)) || wgs->term->urlhack->mouse_old_y != TO_CHR_Y(Y_POS(lParam))) {
+            wgs->term->urlhack->mouse_old_x = TO_CHR_X(X_POS(lParam));
+            wgs->term->urlhack->mouse_old_y = TO_CHR_Y(Y_POS(lParam));
 
             if ((!conf_get_bool(wgs->term->conf, CONF_url_ctrl_click) || urlhack_is_ctrl_pressed()) &&
-                urlhack_is_in_link_region(urlhack_mouse_old_x, urlhack_mouse_old_y)) {
-                    if (urlhack_cursor_is_hand == 0) {
+                urlhack_is_in_link_region(wgs->term->urlhack, wgs->term->urlhack->mouse_old_x, wgs->term->urlhack->mouse_old_y)) {
+                    if (wgs->term->urlhack->cursor_is_hand == 0) {
                         SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)LoadCursor(NULL, IDC_HAND));
-                        urlhack_cursor_is_hand = 1;
+                        wgs->term->urlhack->cursor_is_hand = 1;
                         term_update(wgs->term); /* Force the terminal to update, otherwise the underline will not show (bug somewhere, this is an ugly fix) */
                     }
-            } else if (urlhack_cursor_is_hand == 1) {
+            } else if (wgs->term->urlhack->cursor_is_hand == 1) {
                 SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)LoadCursor(NULL, IDC_IBEAM));
-                urlhack_cursor_is_hand = 0;
+                wgs->term->urlhack->cursor_is_hand = 0;
                 term_update(wgs->term); /* Force the terminal to update, see above */
             }
 
             /* If mouse jumps from one link directly into another, we need a forced terminal update too */
-            if (urlhack_is_in_link_region(urlhack_mouse_old_x, urlhack_mouse_old_y) != urlhack_current_region) {
-                urlhack_current_region = urlhack_is_in_link_region(urlhack_mouse_old_x, urlhack_mouse_old_y);
+            if (urlhack_is_in_link_region(wgs->term->urlhack, wgs->term->urlhack->mouse_old_x, wgs->term->urlhack->mouse_old_y) != wgs->term->urlhack->current_region) {
+                wgs->term->urlhack->current_region = urlhack_is_in_link_region(wgs->term->urlhack, wgs->term->urlhack->mouse_old_x, wgs->term->urlhack->mouse_old_y);
                 term_update(wgs->term);
             }
         }
@@ -3553,7 +3549,7 @@ static LRESULT WndProcInner(HWND hwnd, UINT message,
                 GetCursorPos(&cursor_pt);
                 ScreenToClient(hwnd, &cursor_pt);
 
-                if (urlhack_is_in_link_region(TO_CHR_X(cursor_pt.x), TO_CHR_Y(cursor_pt.y))) {
+                if (urlhack_is_in_link_region(wgs->term->urlhack, TO_CHR_X(cursor_pt.x), TO_CHR_Y(cursor_pt.y))) {
                     SetCursor(LoadCursor(NULL, IDC_HAND));
                     term_update(wgs->term);
                 }
