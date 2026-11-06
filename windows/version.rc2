@@ -54,7 +54,7 @@ BEGIN
 	    VALUE "FileVersion",	TEXTVER
 #endif
 	    VALUE "ProductVersion",	TEXTVER
-	    VALUE "LegalCopyright",	"Copyright \251 " SHORT_COPYRIGHT_DETAILS "."
+	    VALUE "LegalCopyright",	"\251 2026 SilverGreen93"
 #if (!defined SNAPSHOT) && (!defined RELEASE) && (!defined PRERELEASE)
 	    /* Only if VS_FF_PRIVATEBUILD. */
 	    VALUE "PrivateBuild",	TEXTVER /* NBI */

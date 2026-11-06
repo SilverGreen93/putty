@@ -418,7 +418,7 @@ static INT_PTR CALLBACK AboutProc(HWND hwnd, UINT msg,
             "%s\r\n\r\n%s\r\n\r\n%s\r\n\r\n%s\r\n%s",
             appname, ver, buildinfo_text,
             "\251 " SHORT_COPYRIGHT_DETAILS ". All rights reserved.",
-            "Plus version by SilverGreen93");
+            "Plus version \251 2026 SilverGreen93");
         sfree(buildinfo_text);
         SetDlgItemText(hwnd, IDA_TEXT, text);
         MakeDlgItemBorderless(hwnd, IDA_TEXT);
