@@ -41,17 +41,34 @@ jobs:
         # --config at build time, so CMAKE_BUILD_TYPE is not needed here.
         run: cmake -S . -B build
 
-      - name: Build putty
-        run: cmake --build build --config Release --target putty
+      - name: Build all targets
+        # No --target: builds ALL_BUILD, so every program in the tree comes
+        # out as well as the test binaries; the Package step below picks out
+        # of those what actually goes in the zip.
+        run: cmake --build build --config Release
 
       - name: Package
         shell: pwsh
         run: |
+          # Built by ALL_BUILD, but not meant for the release zip:
+          # psocks is a SOCKS proxy test helper, puttytel is the
+          # Telnet-only frontend.
+          $skip = @('psocks.exe', 'puttytel.exe')
           New-Item -ItemType Directory dist | Out-Null
-          Copy-Item build/Release/putty.exe dist/putty-plus.exe
-          Copy-Item putty_themes.reg, LICENSE.txt dist/
-          Compress-Archive -Path dist/putty-plus.exe, dist/putty_themes.reg, dist/LICENSE.txt `
-                           -DestinationPath "dist/${{ steps.name.outputs.zip }}"
+          $files = @()
+          foreach ($exe in Get-ChildItem build/Release/p*.exe) {
+            if ($skip -contains $exe.Name) { continue }
+            # putty.exe is renamed so this fork's binary doesn't collide
+            # with an official PuTTY install.
+            $name = if ($exe.Name -eq 'putty.exe') { 'putty-plus.exe' } else { $exe.Name }
+            Copy-Item $exe.FullName -Destination "dist/$name"
+            $files += "dist/$name"
+          }
+          Copy-Item putty_themes.reg, LICENSE.txt -Destination dist/
+          $files += 'dist/putty_themes.reg'
+          $files += 'dist/LICENSE.txt'
+          Write-Output "Packaging: $($files -join ', ')"
+          Compress-Archive -Path $files -DestinationPath "dist/${{ steps.name.outputs.zip }}"
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
