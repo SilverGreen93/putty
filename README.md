@@ -45,14 +45,14 @@ The `plus` branch is the main branch of this project. The branch called `main` i
 Build instructions:
 
 ```
-cmake .
-cmake --build . --config Debug
+cmake -S . -B build
+cmake --build build --config Release --target putty
 ```
 
 Clean instructions:
 
 ```
-cmake --build . --target clean
+cmake --build build --config Release --target clean
 ```
 
 To request new features or report any found issues, use the Issues tab.
