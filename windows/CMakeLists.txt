@@ -5,6 +5,7 @@ add_sources_from_current_dir(utils
   utils/agent_named_pipe_name.c
   utils/arm_arch_queries.c
   utils/aux_match_opt.c
+  utils/blink_time.c
   utils/centre_window.c
   utils/cmdline_arg.c
   utils/cryptoapi.c
@@ -36,6 +37,7 @@ add_sources_from_current_dir(utils
   utils/shinydialogbox.c
   utils/split_into_argv.c
   utils/split_into_argv_w.c
+  utils/subprocess_waiter.c
   utils/version.c
   utils/win_strerror.c
   unicode.c)
