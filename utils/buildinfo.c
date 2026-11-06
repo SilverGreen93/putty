@@ -44,6 +44,14 @@ char *buildinfo(const char *newline)
      * cases, two different compiler versions have the same _MSC_VER
      * value, and have to be distinguished by _MSC_FULL_VER.
      */
+#elif _MSC_VER >= 1950
+    /*
+     * Visual Studio 2026 and its build tools start at MSVC 14.50 /
+     * _MSC_VER 1950, and a new toolset (_MSC_VER 1951, 1952, ...)
+     * ships with each six-monthly update, so we can work out the
+     * update number instead of adding a clause for every release.
+     */
+    put_fmt(buf, " 2026 (18.%d)", (int)_MSC_VER - 1950);
 #elif _MSC_VER == 1933
     put_fmt(buf, " 2022 (17.3)");
 #elif _MSC_VER == 1932
