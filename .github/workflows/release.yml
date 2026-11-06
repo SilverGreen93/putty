@@ -16,25 +16,21 @@ jobs:
     steps:
       - name: Check out the tag
         uses: actions/checkout@v7
-        with:
-          # Full history + tags, so we can find the last upstream tag merged in.
-          fetch-depth: 0
 
       - name: Work out release name
         id: name
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"        # e.g. PlusR3
-          R="${TAG#Plus}"                 # e.g. R3
-          # Newest numeric upstream tag merged into this tag's commit, e.g. 0.83
-          BASE="$(git tag --merged HEAD --sort=-v:refname -l '[0-9]*' | head -n 1)"
-          echo "r=${R}" >> "$GITHUB_OUTPUT"
+          R="${GITHUB_REF_NAME#Plus}"     # e.g. PlusR4 -> R4
+          # version.h has e.g. #define TEXTVER "Release 0.84 Plus R4"
+          TEXTVER="$(sed -n 's/^#define TEXTVER "\(.*\)"/\1/p' version.h)"
+          BASE="$(echo "$TEXTVER" | sed -n 's/^Release \([0-9][0-9.]*\) Plus .*/\1/p')"
           echo "zip=PuTTYPlus${R}.zip" >> "$GITHUB_OUTPUT"
           if [ -n "$BASE" ]; then
             echo "name=PuTTY Plus ${BASE} ${R}" >> "$GITHUB_OUTPUT"
             echo "draft=false" >> "$GITHUB_OUTPUT"
           else
-            # Couldn't work the name out: publish as a draft so it can be
+            # version.h didn't match: publish as a draft so it can be
             # titled by hand.
             echo "name=PuTTY Plus ${R}" >> "$GITHUB_OUTPUT"
             echo "draft=true" >> "$GITHUB_OUTPUT"
