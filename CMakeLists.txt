@@ -1,4 +1,14 @@
 cmake_minimum_required(VERSION 3.7...3.28)
+
+# cmake/platforms/windows.cmake puts /dynamicbase /nxcompat in
+# CMAKE_C_LINK_FLAGS, which under CMake 4.3's CMP0210 would otherwise apply
+# only to executables and warn about the shared putty-embed target. The
+# MSVC linker enables both protections by default anyway, so this changes
+# nothing observable in the output; it just keeps the policy explicit.
+if(POLICY CMP0210)
+  cmake_policy(SET CMP0210 NEW)
+endif()
+
 project(putty LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
