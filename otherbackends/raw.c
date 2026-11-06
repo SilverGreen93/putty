@@ -208,8 +208,9 @@ static char *raw_init(const BackendVtable *vt, Seat *seat,
     /*
      * Open socket.
      */
-    raw->s = new_connection(addr, *realhost, port, false, true, nodelay,
-                            keepalive, &raw->plug, conf, &raw->interactor);
+    raw->s = new_main_connection(
+        addr, *realhost, port, false, true, nodelay, keepalive, &raw->plug,
+        conf, &raw->interactor, raw->logctx);
     if ((err = sk_socket_error(raw->s)) != NULL)
         return dupstr(err);
 

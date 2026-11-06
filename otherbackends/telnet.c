@@ -762,9 +762,9 @@ static char *telnet_init(const BackendVtable *vt, Seat *seat,
     /*
      * Open socket.
      */
-    telnet->s = new_connection(addr, *realhost, port, false, true, nodelay,
-                               keepalive, &telnet->plug, telnet->conf,
-                               &telnet->interactor);
+    telnet->s = new_main_connection(
+        addr, *realhost, port, false, true, nodelay, keepalive, &telnet->plug,
+        telnet->conf, &telnet->interactor, telnet->logctx);
     if ((err = sk_socket_error(telnet->s)) != NULL)
         return dupstr(err);
 

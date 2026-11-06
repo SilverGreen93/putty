@@ -8,6 +8,6 @@
  * default stuff used for local development runs of 'make'.
  */
 
-#define TEXTVER "Release 0.83 Plus R3"
+#define TEXTVER "Release 0.84 Plus R4"
 #define SSHVER "-Unidentified-Local-Build"
-#define BINARY_VERSION 0,83,0,3
+#define BINARY_VERSION 0,84,0,4

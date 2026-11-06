@@ -1091,7 +1091,9 @@ empty box when the window loses focus; an underline or a vertical
 line becomes dotted.
 
 The \q{\ii{Cursor blinks}} option makes the cursor blink on and off. This
-works in any of the cursor modes.
+works in any of the cursor modes. (On Windows, the blink rate matches
+that configured in Control Panel; so this setting will have no effect
+if cursor blinking has been disabled system-wide.)
 
 \S{config-font} Controlling the \i{font} used in the terminal window
 
@@ -1856,6 +1858,33 @@ reflects the fact that this is the host you're \e{really} connecting
 to, which is more important than the mere means you happen to be
 using to contact that host. (This applies even if you're using a
 protocol other than SSH.)
+
+\S{config-preconn-hook} \I{pre-connection command}\q{Command to run before connection}
+
+If you enter a command line in this box, then PuTTY will run that
+command as a subprocess, just before making its main outgoing network
+connection.
+
+This could be useful if you are connecting to a server that is usually
+switched off but can be turned on remotely on demand, e.g via
+\i{wake-on-LAN}. If you have a script that will perform the wake-up
+action, you can enter its command line in this box. (You should also
+make sure the script waits to terminate until the target machine is
+switched on and actually ready to receive an SSH connection.)
+
+Another use might be a server which requires a preliminary signal such
+as \q{\i{port knocking}} before it will accept a connection to its SSH
+server port in the first place. If you have a program that knows how
+to send the correct knock, you can enter its command line in this box.
+
+In the command string, the special strings \c{%host} and \c{%port} will
+be replaced by the host name and port number you want to connect to,
+similar to specifying a proxy command; see \k{config-proxy-command} for
+the full syntax.
+
+The results of running the program will be logged in PuTTY's Event
+Log. So if it terminates with an error message, the Event Log will
+show the message.
 
 \H{config-data} The Data panel
 
@@ -3200,9 +3229,8 @@ make sure it is selected before anything else.
 On Windows, such libraries are files with a \I{DLL}\cw{.dll}
 extension, and must have been built in the same way as the PuTTY
 executable you're running; if you have a 32-bit DLL, you must run a
-32-bit version of PuTTY, and the same with 64-bit (see
-\k{faq-32bit-64bit}). On Unix, shared libraries generally have a
-\cw{.so} extension.
+32-bit version of PuTTY, and the same with 64-bit. On Unix, shared
+libraries generally have a \cw{.so} extension.
 
 \H{config-ssh-tty} The TTY panel
 

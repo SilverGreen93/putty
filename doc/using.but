@@ -507,10 +507,6 @@ available for local-to-remote forwarded ports; SSH-1 is unable to
 support it for remote-to-local ports, while SSH-2 can support it in
 theory but servers will not necessarily cooperate.
 
-(Note that if you're using Windows XP Service Pack 2, you may need
-to obtain a fix from Microsoft in order to use addresses like
-\cw{127.0.0.5} - see \k{faq-alternate-localhost}.)
-
 For more options relating to port forwarding, see
 \k{config-ssh-portfwd}.
 
@@ -1136,6 +1132,13 @@ proxy settings. In particular, note that since the special sequences
 described there are understood in the argument string, literal
 backslashes must be doubled (if you want \c{\\} in your command, you
 must put \c{\\\\} on the command line).
+
+\S2{using-cmdline-preconnectcommand} \i\c{\-preconnectcommand}:
+run a command before making a network connection
+
+This option specifies an external command to run just before opening
+the main network connection. See \k{config-preconn-hook} for more
+details.
 
 \S2{using-cmdline-share-noshare} \i\c{\-share}, \i\c{\-noshare}:
 enable/disable connection sharing
