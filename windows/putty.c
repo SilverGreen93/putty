@@ -1,6 +1,16 @@
 #include "putty.h"
 #include "storage.h"
 
+#ifdef PUTTY_DLL
+/*
+ * Inside putty.dll this file runs during session creation in the host
+ * process. Options that would end the process (-cleanup, -pgpfp,
+ * cancelling the config box...) abort session creation instead.
+ */
+#define exit(code) embedded_abort("option not supported in embedded PuTTY")
+#define cleanup_exit(code) embedded_abort("session start cancelled")
+#endif
+
 extern bool sesslist_demo_mode;
 extern Filename *dialog_box_demo_screenshot_filename;
 static strbuf *demo_terminal_data = NULL;
@@ -30,6 +40,8 @@ void gui_term_process_cmdline(Conf *conf, char *cmdline)
 
     do_defaults(NULL, conf);
 
+    CmdlineArgList *parsed_arglist = NULL;
+
     p = handle_restrict_acl_cmdline_prefix(cmdline);
 
     if (handle_special_sessionname_cmdline(p, conf)) {
@@ -49,6 +61,7 @@ void gui_term_process_cmdline(Conf *conf, char *cmdline)
          * it sensibly.
          */
         CmdlineArgList *arglist = cmdline_arg_list_from_GetCommandLineW();
+        parsed_arglist = arglist;
         size_t arglistpos = 0;
         while (arglist->args[arglistpos]) {
             CmdlineArg *arg = arglist->args[arglistpos++];
@@ -129,6 +142,14 @@ void gui_term_process_cmdline(Conf *conf, char *cmdline)
     }
 
     cmdline_run_saved(conf);
+
+#ifdef PUTTY_DLL
+    /* A long-lived host process: don't keep (password) copies around */
+    if (parsed_arglist)
+        cmdline_arg_list_free(parsed_arglist);
+#else
+    (void)parsed_arglist;
+#endif
 
     if (demo_config_box) {
         sesslist_demo_mode = true;

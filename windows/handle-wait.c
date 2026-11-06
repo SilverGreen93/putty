@@ -85,6 +85,9 @@ static int allocate_index(void)
     return st->index;
 }
 
+/* Called after the set of handles changes (used by putty.dll) */
+void (*handle_wait_list_changed)(void);
+
 HandleWait *add_handle_wait(HANDLE h, handle_wait_callback_fn_t callback,
                             void *callback_ctx)
 {
@@ -98,6 +101,8 @@ HandleWait *add_handle_wait(HANDLE h, handle_wait_callback_fn_t callback,
     HandleWait *added = add234(t, hw);
     assert(added == hw);
 
+    if (handle_wait_list_changed)
+        handle_wait_list_changed();
     return hw;
 }
 
@@ -107,6 +112,10 @@ void delete_handle_wait(HandleWait *hw)
     HandleWait *deleted = del234(t, hw);
     assert(deleted == hw);
     sfree(hw);
+
+    /* The caller closes the handle next: stop anyone waiting on it */
+    if (handle_wait_list_changed)
+        handle_wait_list_changed();
 }
 
 HandleWaitList *get_handle_wait_list(void)

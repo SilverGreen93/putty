@@ -31,6 +31,31 @@
 #include <richedit.h>
 #include <mmsystem.h>
 #include "urlhack.h" /* PuTTY-url */
+#include <setjmp.h>
+
+/*
+ * Embedded mode (putty.dll): each terminal is a WS_CHILD window inside
+ * a host application's window, all on the host's UI thread, driven by
+ * the host's message loop (see windows/putty-dll.c).
+ */
+#ifdef PUTTY_DLL
+static const bool embedded = true;
+#else
+static const bool embedded = false;
+#endif
+
+/* An embedded child terminal always fills its parent: behave as zoomed. */
+static inline bool is_zoomed(HWND hwnd)
+{
+    return embedded || IsZoomed(hwnd);
+}
+
+/* Nesting depth of PuTTY code on the stack (see putty-dll.c). */
+int putty_code_depth;
+
+/* Command-line errors in embedded mode unwind to wgs_new() */
+static jmp_buf *cmdline_error_jmp;
+char *embed_last_error;
 
 /* From MSDN: In the WM_SYSCOMMAND message, the four low-order bits of
  * wParam are used by Windows, and should be masked off, so we shouldn't
@@ -282,6 +307,8 @@ static const SeatVtable win_seat_vt = {
     .get_cursor_position = win_seat_get_cursor_position,
 };
 
+static void close_session(void *vctx);
+
 static void start_backend(WinGuiSeat *wgs)
 {
     const struct BackendVtable *vt;
@@ -310,6 +337,17 @@ static void start_backend(WinGuiSeat *wgs)
                             conf_dest(wgs->conf), error);
         }
         sfree(error);
+        if (embedded) {
+            /* Don't kill the host: report in the terminal, offer Restart */
+            for (const char *q = msg; *q; q++)
+                term_write(wgs->term, *q == '\n' ?
+                           PTRLEN_LITERAL("\r\n") : make_ptrlen(q, 1));
+            term_write(wgs->term, PTRLEN_LITERAL("\r\n"));
+            sfree(str);
+            sfree(msg);
+            close_session(wgs);
+            return;
+        }
         MessageBox(NULL, msg, str, MB_ICONERROR | MB_OK);
         sfree(str);
         sfree(msg);
@@ -444,13 +482,17 @@ char *terminal_window_class_a(void)
 
 HINSTANCE hinst;
 
-int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
+/*
+ * Process-wide initialisation, done once.
+ */
+bool putty_process_init(HINSTANCE inst, HINSTANCE prev)
 {
-    MSG msg;
     HRESULT hr;
-    int guess_width, guess_height;
 
-    dll_hijacking_protection();
+    if (!embedded) {
+        /* Both of these change process-wide state of the host. */
+        dll_hijacking_protection();
+    }
     enable_dit();
 
     hinst = inst;
@@ -460,14 +502,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     init_common_controls();
 
-    /* Set Explicit App User Model Id so that jump lists don't cause
-       PuTTY to hang on to removable media. */
+    if (!embedded) {
+        /* Set Explicit App User Model Id so that jump lists don't cause
+           PuTTY to hang on to removable media. */
+        set_explicit_app_user_model_id();
 
-    set_explicit_app_user_model_id();
-
-    /* Ensure a Maximize setting in Explorer doesn't maximise the
-     * config box. */
-    defuse_showwindow();
+        /* Ensure a Maximize setting in Explorer doesn't maximise the
+         * config box. */
+        defuse_showwindow();
+    }
 
     init_winver();
 
@@ -486,6 +529,36 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     setup_gui_timing();
 
+    /*
+     * Initialize COM. (A host UI thread has normally done this
+     * already, which gives S_FALSE or RPC_E_CHANGED_MODE.)
+     */
+    hr = CoInitialize(NULL);
+    if (hr != S_OK && hr != S_FALSE &&
+        !(embedded && hr == RPC_E_CHANGED_MODE)) {
+        char *str = dupprintf("%s Fatal Error", appname);
+        MessageBox(NULL, "Failed to initialize COM subsystem",
+                   str, MB_OK | MB_ICONEXCLAMATION);
+        sfree(str);
+        return false;
+    }
+
+    /* Init for PuTTY-url */
+    urlhack_init();
+
+    return true;
+}
+
+/*
+ * Create one terminal session and its window. In embedded mode the
+ * window is a child of 'parent'; on a command-line error NULL is
+ * returned and the reason is in embed_last_error.
+ */
+WinGuiSeat *wgs_new(char *cmdline, HWND parent,
+                    const PuttyEmbedCallbacks *cb, void *cbctx, int show)
+{
+    int guess_width, guess_height;
+
     WinGuiSeat *wgs = snew(WinGuiSeat);
     memset(wgs, 0, sizeof(*wgs));
     wgs_link(wgs);
@@ -497,26 +570,35 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     wgs->caret_x = wgs->caret_y = -1;
     wgs->busy_status = BUSY_NOT;
 
-    wgs->conf = conf_new();
+    wgs->embed_parent = parent;
+    if (cb)
+        wgs->embed_cb = *cb;
+    wgs->embed_ctx = cbctx;
 
-    /*
-     * Initialize COM.
-     */
-    hr = CoInitialize(NULL);
-    if (hr != S_OK && hr != S_FALSE) {
-        char *str = dupprintf("%s Fatal Error", appname);
-        MessageBox(NULL, "Failed to initialize COM subsystem",
-                   str, MB_OK | MB_ICONEXCLAMATION);
-        sfree(str);
-        return 1;
-    }
+    wgs->conf = conf_new();
 
     /*
      * Process the command line.
      * (If the command line doesn't provide enough info to start a
      * session, this will detour via the config box.)
      */
+    jmp_buf env;
+    if (embedded) {
+        cmdline_reset();
+        cmdline_error_jmp = &env;
+        if (setjmp(env)) {
+            cmdline_error_jmp = NULL;
+            cmdline_cleanup();
+            conf_free(wgs->conf);
+            wgs_unlink(wgs);
+            sfree(wgs);
+            return NULL;
+        }
+    }
     gui_term_process_cmdline(wgs->conf, cmdline);
+    cmdline_error_jmp = NULL;
+    /* -pw belongs to this session only, not to the next one parsed */
+    wgs->cmdline_password = cmdline_password_swap(NULL);
 
     memset(&wgs->ucsdata, 0, sizeof(wgs->ucsdata));
 
@@ -566,6 +648,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             exwinmode |= WS_EX_TOPMOST;
         if (conf_get_bool(wgs->conf, CONF_sunken_edge))
             exwinmode |= WS_EX_CLIENTEDGE;
+        if (embedded) {
+            winmode = WS_CHILD | WS_CLIPSIBLINGS |
+                (winmode & WS_VSCROLL);
+            exwinmode &= ~WS_EX_TOPMOST;
+        }
 
 #ifdef TEST_ANSI_WINDOW
         /* For developer testing of ANSI window support, pretend
@@ -577,10 +664,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         sw_PeekMessage = PeekMessageW;
         sw_DispatchMessage = DispatchMessageW;
         sw_DefWindowProc = DefWindowProcW;
-        wgs->term_hwnd = CreateWindowExW(
-            exwinmode, terminal_window_class_w(), uappname,
-            winmode, CW_USEDEFAULT, CW_USEDEFAULT,
-            guess_width, guess_height, NULL, NULL, inst, NULL);
+        if (embedded)
+            wgs->term_hwnd = CreateWindowExW(
+                exwinmode, terminal_window_class_w(), uappname,
+                winmode, 0, 0, guess_width, guess_height,
+                parent, NULL, hinst, NULL);
+        else
+            wgs->term_hwnd = CreateWindowExW(
+                exwinmode, terminal_window_class_w(), uappname,
+                winmode, CW_USEDEFAULT, CW_USEDEFAULT,
+                guess_width, guess_height, NULL, NULL, hinst, NULL);
 #endif
 
 #if defined LEGACY_WINDOWS || defined TEST_ANSI_WINDOW
@@ -594,7 +687,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             wgs->term_hwnd = CreateWindowExA(
                 exwinmode, terminal_window_class_a(), appname,
                 winmode, CW_USEDEFAULT, CW_USEDEFAULT,
-                guess_width, guess_height, NULL, NULL, inst, NULL);
+                guess_width, guess_height, NULL, NULL, hinst, NULL);
         }
 #endif
 
@@ -608,9 +701,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     }
 
     SetWindowLongPtr(wgs->term_hwnd, GWLP_USERDATA, (LONG_PTR)wgs);
-
-    /* Init for PuTTY-url */
-    urlhack_init();
 
     /*
      * Initialise the fonts, simultaneously correcting the guesses
@@ -695,8 +785,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         }
 
         /* And set the window to the final size and position we've chosen */
-        SetWindowPos(wgs->term_hwnd, NULL, x, y, guess_width, guess_height,
-                    SWP_NOREDRAW | SWP_NOZORDER);
+        if (embedded) {
+            /* The host owns our geometry: fill the parent */
+            RECT pr;
+            GetClientRect(parent, &pr);
+            SetWindowPos(wgs->term_hwnd, NULL, 0, 0, pr.right, pr.bottom,
+                         SWP_NOREDRAW | SWP_NOZORDER);
+        } else
+            SetWindowPos(wgs->term_hwnd, NULL, x, y,
+                         guess_width, guess_height,
+                         SWP_NOREDRAW | SWP_NOZORDER);
     }
 
     /*
@@ -744,7 +842,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         int j;
         char *str;
 
-        wgs->popup_menus[SYSMENU].menu = GetSystemMenu(wgs->term_hwnd, false);
+        /* A child window has no system menu of its own */
+        wgs->popup_menus[SYSMENU].menu = embedded ? CreatePopupMenu() :
+            GetSystemMenu(wgs->term_hwnd, false);
         wgs->popup_menus[CTXMENU].menu = CreatePopupMenu();
 
         for (j = 0; j < lenof(wgs->popup_menus); j++) {
@@ -763,19 +863,25 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             AppendMenu(m, MF_SEPARATOR, 0, 0);
             AppendMenu(m, MF_ENABLED, IDM_SHOWLOG, "&Event Log");
             AppendMenu(m, MF_SEPARATOR, 0, 0);
-            AppendMenu(m, MF_ENABLED, IDM_NEWSESS, "Ne&w Session...");
-            AppendMenu(m, MF_ENABLED, IDM_DUPSESS, "&Duplicate Session");
-            AppendMenu(m, MF_POPUP | MF_ENABLED, (UINT_PTR)wgs->savedsess_menu,
-                       "Sa&ved Sessions");
+            if (!embedded) {
+                /* These spawn new putty.exe processes; the host
+                 * application provides its own equivalents. */
+                AppendMenu(m, MF_ENABLED, IDM_NEWSESS, "Ne&w Session...");
+                AppendMenu(m, MF_ENABLED, IDM_DUPSESS, "&Duplicate Session");
+                AppendMenu(m, MF_POPUP | MF_ENABLED,
+                           (UINT_PTR)wgs->savedsess_menu, "Sa&ved Sessions");
+            }
             AppendMenu(m, MF_ENABLED, IDM_RECONF, "Chan&ge Settings...");
             AppendMenu(m, MF_SEPARATOR, 0, 0);
             AppendMenu(m, MF_ENABLED, IDM_COPYALL, "C&opy All to Clipboard");
             AppendMenu(m, MF_ENABLED, IDM_CLRSB, "C&lear Scrollback");
             AppendMenu(m, MF_ENABLED, IDM_RESET, "Rese&t Terminal");
-            AppendMenu(m, MF_SEPARATOR, 0, 0);
-            AppendMenu(m, (conf_get_int(wgs->conf, CONF_resize_action)
-                           == RESIZE_DISABLED) ? MF_GRAYED : MF_ENABLED,
-                       IDM_FULLSCREEN, "&Full Screen");
+            if (!embedded) {
+                AppendMenu(m, MF_SEPARATOR, 0, 0);
+                AppendMenu(m, (conf_get_int(wgs->conf, CONF_resize_action)
+                               == RESIZE_DISABLED) ? MF_GRAYED : MF_ENABLED,
+                           IDM_FULLSCREEN, "&Full Screen");
+            }
             AppendMenu(m, MF_SEPARATOR, 0, 0);
             if (has_help())
                 AppendMenu(m, MF_ENABLED, IDM_HELP, "&Help");
@@ -789,7 +895,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         lp_eventlog(&wgs->logpolicy, "Running with restricted process ACL");
     }
 
-    winselgui_set_hwnd(wgs->term_hwnd);
+    if (!embedded)                     /* putty-dll.c owns this window */
+        winselgui_set_hwnd(wgs->term_hwnd);
     start_backend(wgs);
 
     /*
@@ -808,13 +915,29 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     /*
      * Finally show the window!
      */
-    ShowWindow(wgs->term_hwnd, show);
-    SetForegroundWindow(wgs->term_hwnd);
-
-    term_set_focus(wgs->term, GetForegroundWindow() == wgs->term_hwnd);
+    if (embedded) {
+        ShowWindow(wgs->term_hwnd, SW_SHOW);
+        term_set_focus(wgs->term, GetFocus() == wgs->term_hwnd);
+    } else {
+        ShowWindow(wgs->term_hwnd, show);
+        SetForegroundWindow(wgs->term_hwnd);
+        term_set_focus(wgs->term, GetForegroundWindow() == wgs->term_hwnd);
+    }
     UpdateWindow(wgs->term_hwnd);
 
     gui_terminal_ready(wgs->term_hwnd, &wgs->seat, wgs->backend);
+    return wgs;
+}
+
+#ifndef PUTTY_DLL
+int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
+{
+    MSG msg;
+
+    if (!putty_process_init(inst, prev))
+        return 1;
+
+    WinGuiSeat *wgs = wgs_new(cmdline, NULL, NULL, NULL, show);
 
     while (1) {
         int n;
@@ -893,6 +1016,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     cleanup_exit(msg.wParam);          /* this doesn't return... */
     return msg.wParam;                 /* ... but optimiser doesn't know */
 }
+#endif /* PUTTY_DLL */
 
 static void wgs_cleanup(WinGuiSeat *wgs)
 {
@@ -900,8 +1024,58 @@ static void wgs_cleanup(WinGuiSeat *wgs)
     sfree(wgs->logpal);
     if (wgs->pal)
         DeleteObject(wgs->pal);
+    if (embedded) {
+        /* The process lives on, so free the whole session. */
+        delete_callbacks_for_context(wgs);
+        expire_timer_context(wgs);
+        if (wgs->ldisc)
+            ldisc_free(wgs->ldisc);
+        if (wgs->backend)
+            backend_free(wgs->backend);
+        if (wgs->term)
+            term_free(wgs->term);
+        if (wgs->logctx)
+            log_free(wgs->logctx);
+        conf_free(wgs->conf);
+        eventlog_free(&wgs->eventlog);
+        for (int i = 0; i < lenof(wgs->popup_menus); i++)
+            if (wgs->popup_menus[i].menu)
+                DestroyMenu(wgs->popup_menus[i].menu);
+        if (wgs->savedsess_menu)
+            DestroyMenu(wgs->savedsess_menu); /* never attached */
+        if (wgs->caretbm)
+            DeleteObject(wgs->caretbm);
+        sfree(wgs->window_name);
+        sfree(wgs->icon_name);
+        burnstr(wgs->cmdline_password);
+    }
     wgs_unlink(wgs);
     sfree(wgs);
+}
+
+static void wgs_cleanup_callback(void *vctx)
+{
+    wgs_cleanup((WinGuiSeat *)vctx);
+}
+
+/*
+ * Embedded mode: tear the session down from the top level, never from
+ * inside backend code that called us (which wgs_cleanup would free).
+ */
+static void wgs_destroy_callback(void *vctx)
+{
+    WinGuiSeat *wgs = (WinGuiSeat *)vctx;
+    DestroyWindow(wgs->term_hwnd);     /* WM_DESTROY does the rest */
+}
+
+static void wgs_quit(WinGuiSeat *wgs, int code)
+{
+    if (embedded) {
+        wgs->embed_exitcode = code;
+        queue_toplevel_callback(wgs_destroy_callback, wgs);
+    } else {
+        PostQuitMessage(code);
+    }
 }
 
 char *handle_restrict_acl_cmdline_prefix(char *p)
@@ -1207,7 +1381,7 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
     sfree(title);
 
     if (conf_get_int(wgs->conf, CONF_close_on_exit) == FORCE_ON)
-        PostQuitMessage(1);
+        wgs_quit(wgs, 1);
     else {
         queue_toplevel_callback(close_session, wgs);
     }
@@ -1246,11 +1420,31 @@ void cmdline_error(const char *fmt, ...)
     va_start(ap, fmt);
     message = dupvprintf(fmt, ap);
     va_end(ap);
+    if (embedded && cmdline_error_jmp) {
+        /* Let the host report it; never exit the host process */
+        sfree(embed_last_error);
+        embed_last_error = message;
+        longjmp(*cmdline_error_jmp, 1);
+    }
     title = dupprintf("%s Command Line Error", appname);
     MessageBox(find_window_for_msgbox(), message, title, MB_ICONERROR | MB_OK);
     sfree(message);
     sfree(title);
     exit(1);
+}
+
+/*
+ * Abort session creation in embedded mode (see the exit() override in
+ * putty.c). Outside wgs_new() there is nothing to unwind to.
+ */
+void embedded_abort(const char *msg)
+{
+    if (cmdline_error_jmp) {
+        sfree(embed_last_error);
+        embed_last_error = dupstr(msg);
+        longjmp(*cmdline_error_jmp, 1);
+    }
+    modalfatalbox("%s", msg);
 }
 
 static inline rgb rgb_from_colorref(COLORREF cr)
@@ -1730,7 +1924,7 @@ static void wintw_request_resize(TermWin *tw, int w, int h)
      * is disabled entirely, or if it's supposed to change
      * rows/columns but the window is maximised. */
     if (resize_action == RESIZE_DISABLED
-        || (resize_action == RESIZE_TERM && IsZoomed(wgs->term_hwnd))) {
+        || (resize_action == RESIZE_TERM && is_zoomed(wgs->term_hwnd))) {
         deny_resize = true;
     }
 
@@ -1764,7 +1958,7 @@ static void wintw_request_resize(TermWin *tw, int w, int h)
         }
     }
 
-    if (resize_action != RESIZE_FONT && !IsZoomed(wgs->term_hwnd)) {
+    if (resize_action != RESIZE_FONT && !is_zoomed(wgs->term_hwnd)) {
         width = wgs->extra_width + wgs->font_width * w;
         height = wgs->extra_height + wgs->font_height * h;
 
@@ -1844,7 +2038,7 @@ static void reset_window(WinGuiSeat *wgs, int reinit)
         recompute_window_offset(wgs);
     }
 
-    if (IsZoomed(wgs->term_hwnd)) {
+    if (is_zoomed(wgs->term_hwnd)) {
         /* We're fullscreen, this means we must not change the size of
          * the window so it's the font size or the terminal itself.
          */
@@ -2135,7 +2329,7 @@ static void exit_callback(void *vctx)
          * appropriate action. */
         if (close_on_exit == FORCE_ON ||
             (close_on_exit == AUTO && exitcode != INT_MAX)) {
-            PostQuitMessage(0);
+            wgs_quit(wgs, 0);
         } else {
             queue_toplevel_callback(close_session, wgs);
             wgs->session_closed = true;
@@ -2226,13 +2420,35 @@ static void wm_size_resize_term(WinGuiSeat *wgs, LPARAM lParam)
     conf_set_int(wgs->conf, CONF_width, w);
 }
 
+static LRESULT WndProcInner(HWND hwnd, UINT message,
+                            WPARAM wParam, LPARAM lParam);
+
+void putty_code_left(void);            /* putty-dll.c */
+
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                                 WPARAM wParam, LPARAM lParam)
+{
+    putty_code_depth++;
+    LRESULT ret = WndProcInner(hwnd, message, wParam, lParam);
+    --putty_code_depth;
+#ifdef PUTTY_DLL
+    if (putty_code_depth == 0)
+        putty_code_left();
+#endif
+    return ret;
+}
+
+static LRESULT WndProcInner(HWND hwnd, UINT message,
+                            WPARAM wParam, LPARAM lParam)
 {
     HDC hdc;
     int resize_action;
     WinGuiSeat *wgs = (WinGuiSeat *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
     POINT cursor_pt; /* PuTTY-url */
+
+    /* Messages before GWLP_USERDATA is set, or after teardown */
+    if (!wgs)
+        return sw_DefWindowProc(hwnd, message, wParam, lParam);
 
     switch (message) {
       case WM_CREATE:
@@ -2260,6 +2476,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
       }
       case WM_DESTROY:
         show_mouseptr(wgs, true);
+        if (embedded) {
+            PuttyEmbedCallbacks cb = wgs->embed_cb;
+            void *cbctx = wgs->embed_ctx;
+            int code = wgs->embed_exitcode;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+            /* the host may free its side as soon as it hears about this */
+            memset(&wgs->embed_cb, 0, sizeof(wgs->embed_cb));
+            if (putty_code_depth > 1) {
+                /* Destroyed from inside other PuTTY code (e.g. a modal
+                 * prompt of this session): free once that has unwound */
+                queue_toplevel_callback(wgs_cleanup_callback, wgs);
+            } else {
+                wgs_cleanup(wgs);
+            }
+            if (cb.on_closed)
+                cb.on_closed(cbctx, code);
+            return 0;
+        }
         PostQuitMessage(0);
         return 0;
       case WM_INITMENUPOPUP:
@@ -2297,6 +2531,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           case IDM_NEWSESS:
           case IDM_DUPSESS:
           case IDM_SAVEDSESS: {
+            if (embedded)
+                break;   /* would launch the host exe; host has its own */
             char b[2048];
             char *cl;
             const char *argprefix;
@@ -2419,7 +2655,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                                    (resize_action == RESIZE_DISABLED
                                     ? MF_GRAYED : MF_ENABLED));
                 /* Gracefully unzoom if necessary */
-                if (IsZoomed(hwnd) && (resize_action == RESIZE_DISABLED))
+                if (is_zoomed(hwnd) && (resize_action == RESIZE_DISABLED))
                     ShowWindow(hwnd, SW_RESTORE);
             }
 
@@ -2471,7 +2707,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 conf_get_int(wgs->conf, CONF_savelines) !=
                 conf_get_int(prev_conf, CONF_savelines) ||
                 resize_action == RESIZE_FONT ||
-                (resize_action == RESIZE_EITHER && IsZoomed(hwnd)) ||
+                (resize_action == RESIZE_EITHER && is_zoomed(hwnd)) ||
                 resize_action == RESIZE_DISABLED)
                 term_size(wgs->term, conf_get_int(wgs->conf, CONF_height),
                           conf_get_int(wgs->conf, CONF_width),
@@ -2536,7 +2772,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             }
 
             /* Oops */
-            if (resize_action == RESIZE_DISABLED && IsZoomed(hwnd)) {
+            if (resize_action == RESIZE_DISABLED && is_zoomed(hwnd)) {
                 force_normal(hwnd);
                 init_lvl = 2;
             }
@@ -2650,6 +2886,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
       case WM_LBUTTONUP:
       case WM_MBUTTONUP:
       case WM_RBUTTONUP:
+        /*
+         * A child window doesn't take focus on click by itself. Focus
+         * the host's parent window first, so the host's UI framework
+         * knows which of its controls is active (and restores focus
+         * there on reactivation); a host that forwards focus to us
+         * makes the second SetFocus a no-op.
+         */
+        if (embedded && GetFocus() != hwnd &&
+            (message == WM_LBUTTONDOWN || message == WM_MBUTTONDOWN ||
+             message == WM_RBUTTONDOWN)) {
+            SetFocus(GetParent(hwnd));
+            if (GetFocus() != hwnd)
+                SetFocus(hwnd);
+        }
         if (message == WM_RBUTTONDOWN &&
             ((wParam & MK_CONTROL) ||
              (conf_get_int(wgs->conf, CONF_mouse_is_xterm) == MOUSE_WINDOWS))) {
@@ -3088,6 +3338,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         sys_cursor_update(wgs);
         break;
       case WM_SIZE:
+        /* An embedded child is always "maximised" within its parent */
+        if (embedded && wParam == SIZE_RESTORED)
+            wParam = SIZE_MAXIMIZED;
         resize_action = conf_get_int(wgs->conf, CONF_resize_action);
         term_notify_minimised(wgs->term, wParam == SIZE_MINIMIZED);
         {
@@ -4957,6 +5210,8 @@ static void wintw_set_title(TermWin *tw, const char *title, int codepage)
     if (conf_get_bool(wgs->conf, CONF_win_name_always) ||
         !IsIconic(wgs->term_hwnd))
         sw_SetWindowText(wgs->term_hwnd, wgs->window_name);
+    if (wgs->embed_cb.on_title)
+        wgs->embed_cb.on_title(wgs->embed_ctx, wgs->window_name);
 }
 
 static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
@@ -5650,7 +5905,8 @@ static bool flash_window_ex(WinGuiSeat *wgs, DWORD dwFlags,
     if (p_FlashWindowEx) {
         FLASHWINFO fi;
         fi.cbSize = sizeof(fi);
-        fi.hwnd = wgs->term_hwnd;
+        /* flash the top-level window (ours, or the host's) */
+        fi.hwnd = GetAncestor(wgs->term_hwnd, GA_ROOT);
         fi.dwFlags = dwFlags;
         fi.uCount = uCount;
         fi.dwTimeout = dwTimeout;
@@ -5686,7 +5942,7 @@ static void flash_window(WinGuiSeat *wgs, int mode)
             if (p_FlashWindowEx)
                 flash_window_ex(wgs, FLASHW_STOP, 0, 0);
             else
-                FlashWindow(wgs->term_hwnd, false);
+                FlashWindow(GetAncestor(wgs->term_hwnd, GA_ROOT), false);
         }
 
     } else if (mode == 2) {
@@ -5705,7 +5961,7 @@ static void flash_window(WinGuiSeat *wgs, int mode)
                                 0 /* system cursor blink rate */);
                 /* No need to schedule timer */
             } else {
-                FlashWindow(wgs->term_hwnd, true);
+                FlashWindow(GetAncestor(wgs->term_hwnd, GA_ROOT), true);
                 wgs->next_flash = schedule_timer(450, flash_window_timer, wgs);
             }
         }
@@ -5713,7 +5969,7 @@ static void flash_window(WinGuiSeat *wgs, int mode)
     } else if ((mode == 1) && (beep_ind == B_IND_FLASH)) {
         /* maintain */
         if (wgs->flashing && !p_FlashWindowEx) {
-            FlashWindow(wgs->term_hwnd, true);    /* toggle */
+            FlashWindow(GetAncestor(wgs->term_hwnd, GA_ROOT), true);    /* toggle */
             wgs->next_flash = schedule_timer(450, flash_window_timer, wgs);
         }
     }
@@ -5793,6 +6049,8 @@ static void wintw_bell(TermWin *tw, int mode)
  */
 static void wintw_set_minimised(TermWin *tw, bool minimised)
 {
+    if (embedded)
+        return;
     WinGuiSeat *wgs = container_of(tw, WinGuiSeat, termwin);
     if (IsIconic(wgs->term_hwnd)) {
         if (!minimised)
@@ -5812,7 +6070,7 @@ static void wintw_move(TermWin *tw, int x, int y)
     int resize_action = conf_get_int(wgs->conf, CONF_resize_action);
     if (resize_action == RESIZE_DISABLED ||
         resize_action == RESIZE_FONT ||
-        IsZoomed(wgs->term_hwnd))
+        is_zoomed(wgs->term_hwnd))
         return;
 
     SetWindowPos(wgs->term_hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
@@ -5825,6 +6083,8 @@ static void wintw_move(TermWin *tw, int x, int y)
 static void wintw_set_zorder(TermWin *tw, bool top)
 {
     WinGuiSeat *wgs = container_of(tw, WinGuiSeat, termwin);
+    if (embedded)
+        return;
     if (conf_get_bool(wgs->conf, CONF_alwaysontop))
         return;                        /* ignore */
     SetWindowPos(wgs->term_hwnd, top ? HWND_TOP : HWND_BOTTOM, 0, 0, 0, 0,
@@ -5847,7 +6107,9 @@ static void wintw_refresh(TermWin *tw)
 static void wintw_set_maximised(TermWin *tw, bool maximised)
 {
     WinGuiSeat *wgs = container_of(tw, WinGuiSeat, termwin);
-    if (IsZoomed(wgs->term_hwnd)) {
+    if (embedded)
+        return;
+    if (is_zoomed(wgs->term_hwnd)) {
         if (!maximised)
             ShowWindow(wgs->term_hwnd, SW_RESTORE);
     } else {
@@ -5861,7 +6123,9 @@ static void wintw_set_maximised(TermWin *tw, bool maximised)
  */
 static bool is_full_screen(WinGuiSeat *wgs)
 {
-    if (!IsZoomed(wgs->term_hwnd))
+    if (embedded)
+        return false;
+    if (!is_zoomed(wgs->term_hwnd))
         return false;
     if (GetWindowLongPtr(wgs->term_hwnd, GWL_STYLE) & WS_CAPTION)
         return false;
@@ -5935,7 +6199,7 @@ static void make_full_screen(WinGuiSeat *wgs)
     DWORD style;
     RECT ss;
 
-    assert(IsZoomed(wgs->term_hwnd));
+    assert(is_zoomed(wgs->term_hwnd));
 
     if (is_full_screen(wgs))
         return;
@@ -6006,9 +6270,11 @@ static void clear_full_screen(WinGuiSeat *wgs)
  */
 static void flip_full_screen(WinGuiSeat *wgs)
 {
+    if (embedded)
+        return;           /* the host window decides about full screen */
     if (is_full_screen(wgs)) {
         ShowWindow(wgs->term_hwnd, SW_RESTORE);
-    } else if (IsZoomed(wgs->term_hwnd)) {
+    } else if (is_zoomed(wgs->term_hwnd)) {
         make_full_screen(wgs);
     } else {
         SendMessage(wgs->term_hwnd, WM_FULLSCR_ON_MAX, 0, 0);
@@ -6039,7 +6305,9 @@ static SeatPromptResult win_seat_get_userpass_input(Seat *seat, prompts_t *p)
 {
     WinGuiSeat *wgs = container_of(seat, WinGuiSeat, seat);
     SeatPromptResult spr;
+    char *other = cmdline_password_swap(wgs->cmdline_password);
     spr = cmdline_get_passwd_input(p, &wgs->cmdline_get_passwd_state, true);
+    wgs->cmdline_password = cmdline_password_swap(other);
     if (spr.kind == SPRK_INCOMPLETE)
         spr = term_get_userpass_input(wgs->term, p);
     return spr;

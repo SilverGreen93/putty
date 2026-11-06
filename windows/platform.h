@@ -642,6 +642,13 @@ void force_normal(HWND hwnd);
 void modal_about_box(HWND hwnd);
 void show_help(HWND hwnd);
 HWND event_log_window(void);
+struct EventLogData;
+void eventlog_free(struct EventLogData *el);
+
+/* putty.dll support */
+extern wchar_t *cmdline_override_w;
+bool putty_process_init(HINSTANCE inst, HINSTANCE prev);
+NORETURN void embedded_abort(const char *msg);
 
 /*
  * Exports from utils.
@@ -731,6 +738,7 @@ typedef struct HandleWaitList {
 HandleWaitList *get_handle_wait_list(void);
 void handle_wait_activate(HandleWaitList *hwl, int index);
 void handle_wait_list_free(HandleWaitList *hwl);
+extern void (*handle_wait_list_changed)(void);
 
 /*
  * Pageant-related pathnames.

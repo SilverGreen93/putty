@@ -76,12 +76,16 @@ static CmdlineArg *cmdline_arg_from_wide_argv_word(
     return &arg->argp;
 }
 
+/* If set, used instead of GetCommandLineW() (by putty.dll) */
+wchar_t *cmdline_override_w;
+
 CmdlineArgList *cmdline_arg_list_from_GetCommandLineW(void)
 {
     CmdlineArgListWin *list = snew(CmdlineArgListWin);
     CmdlineArgList *listp = &list->listp;
 
-    list->cmdline = GetCommandLineW();
+    list->cmdline = cmdline_override_w ? cmdline_override_w :
+        GetCommandLineW();
 
     int argc;
     split_into_argv_w(list->cmdline, true,

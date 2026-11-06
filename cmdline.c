@@ -178,6 +178,30 @@ bool cmdline_seat_verbose(Seat *seat) { return cmdline_verbose(); }
 bool cmdline_lp_verbose(LogPolicy *lp) { return cmdline_verbose(); }
 bool cmdline_loaded_session(void) { return loaded_session; }
 
+/*
+ * Forget everything from a previous command line, so that one process
+ * can parse several (putty.dll creates one session per command line).
+ */
+void cmdline_reset(void)
+{
+    cmdline_cleanup();
+    seen_hostname_argument = false;
+    seen_port_argument = false;
+    seen_verbose_option = false;
+    loaded_session = false;
+}
+
+/*
+ * Install 'pw' as the -pw password used by cmdline_get_passwd_input,
+ * returning the previous one. Lets each session own its password.
+ */
+char *cmdline_password_swap(char *pw)
+{
+    char *old = cmdline_password;
+    cmdline_password = pw;
+    return old;
+}
+
 static void set_protocol(Conf *conf, int protocol)
 {
     settings_set_default_protocol(protocol);

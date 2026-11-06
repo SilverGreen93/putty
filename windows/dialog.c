@@ -212,12 +212,7 @@ static void pds_initdialog_finish(PortableDialogStuff *pds)
     pds->initialised = true;
 }
 
-#define LOGEVENT_INITIAL_MAX 128
-#define LOGEVENT_CIRCULAR_MAX 128
-
-static char *events_initial[LOGEVENT_INITIAL_MAX];
-static char *events_circular[LOGEVENT_CIRCULAR_MAX];
-static int ninitial = 0, ncircular = 0, circular_first = 0;
+/* Event Log state lives per session in WinGuiSeat (struct EventLogData) */
 
 #define PRINTER_DISABLED_STRING "None (printing disabled)"
 
@@ -239,17 +234,36 @@ void force_normal(HWND hwnd)
     recurse = false;
 }
 
-static char *getevent(int i)
+static char *getevent(struct EventLogData *el, int i)
 {
-    if (i < ninitial)
-        return events_initial[i];
-    if ((i -= ninitial) < ncircular)
-        return events_circular[(circular_first + i) % LOGEVENT_CIRCULAR_MAX];
+    if (i < el->ninitial)
+        return el->events_initial[i];
+    if ((i -= el->ninitial) < el->ncircular)
+        return el->events_circular[(el->circular_first + i) %
+                                   LOGEVENT_CIRCULAR_MAX];
     return NULL;
 }
 
-static HWND logbox;
-HWND event_log_window(void) { return logbox; }
+HWND event_log_window(void)
+{
+    if (wgslisthead.next != &wgslisthead) {
+        WinGuiSeat *wgs = container_of(
+            wgslisthead.next, WinGuiSeat, wgslistnode);
+        return wgs->eventlog.logbox;
+    }
+    return NULL;
+}
+
+void eventlog_free(struct EventLogData *el)
+{
+    if (el->logbox)
+        DestroyWindow(el->logbox);
+    for (int i = 0; i < LOGEVENT_INITIAL_MAX; i++)
+        sfree(el->events_initial[i]);
+    for (int i = 0; i < LOGEVENT_CIRCULAR_MAX; i++)
+        sfree(el->events_circular[i]);
+    memset(el, 0, sizeof(*el));
+}
 
 static void update_logbox_horizontal_extent(HWND logbox)
 {
@@ -296,6 +310,13 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
                                 WPARAM wParam, LPARAM lParam)
 {
     int i;
+    struct EventLogData *el;
+
+    if (msg == WM_INITDIALOG)
+        SetWindowLongPtr(hwnd, DWLP_USER, lParam);
+    el = (struct EventLogData *)GetWindowLongPtr(hwnd, DWLP_USER);
+    if (!el)
+        return 0;
 
     switch (msg) {
       case WM_INITDIALOG: {
@@ -307,12 +328,12 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
         SendDlgItemMessage(hwnd, IDN_LIST, LB_SETTABSTOPS, 2,
                            (LPARAM) tabs);
 
-        for (i = 0; i < ninitial; i++)
+        for (i = 0; i < el->ninitial; i++)
             SendDlgItemMessage(hwnd, IDN_LIST, LB_ADDSTRING,
-                               0, (LPARAM) events_initial[i]);
-        for (i = 0; i < ncircular; i++)
+                               0, (LPARAM) el->events_initial[i]);
+        for (i = 0; i < el->ncircular; i++)
             SendDlgItemMessage(hwnd, IDN_LIST, LB_ADDSTRING,
-                               0, (LPARAM) events_circular[(circular_first + i) % LOGEVENT_CIRCULAR_MAX]);
+                               0, (LPARAM) el->events_circular[(el->circular_first + i) % LOGEVENT_CIRCULAR_MAX]);
         update_logbox_horizontal_extent(hwnd);
 
         return 1;
@@ -321,7 +342,7 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
         switch (LOWORD(wParam)) {
           case IDOK:
           case IDCANCEL:
-            logbox = NULL;
+            el->logbox = NULL;
             SetActiveWindow(GetParent(hwnd));
             DestroyWindow(hwnd);
             return 0;
@@ -352,7 +373,7 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
 
                     strbuf *sb = strbuf_new();
                     for (int i = 0; i < count; i++) {
-                        char *q = getevent(selitems[i]);
+                        char *q = getevent(el, selitems[i]);
                         put_datapl(sb, ptrlen_from_asciz(q));
                         put_data(sb, sel_nl, sizeof(sel_nl));
                     }
@@ -360,7 +381,7 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
                     strbuf_free(sb);
                     sfree(selitems);
 
-                    for (i = 0; i < (ninitial + ncircular); i++)
+                    for (i = 0; i < (el->ninitial + el->ncircular); i++)
                         SendDlgItemMessage(hwnd, IDN_LIST, LB_SETSEL,
                                            false, i);
                 }
@@ -369,7 +390,7 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
         }
         return 0;
       case WM_CLOSE:
-        logbox = NULL;
+        el->logbox = NULL;
         SetActiveWindow(GetParent(hwnd));
         DestroyWindow(hwnd);
         return 0;
@@ -816,35 +837,37 @@ static void win_gui_eventlog(LogPolicy *lp, const char *string)
     char timebuf[40];
     char **location;
     struct tm tm;
+    WinGuiSeat *wgs = container_of(lp, WinGuiSeat, logpolicy);
+    struct EventLogData *el = &wgs->eventlog;
 
     tm=ltime();
     strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S\t", &tm);
 
-    if (ninitial < LOGEVENT_INITIAL_MAX)
-        location = &events_initial[ninitial];
+    if (el->ninitial < LOGEVENT_INITIAL_MAX)
+        location = &el->events_initial[el->ninitial];
     else
-        location = &events_circular[(circular_first + ncircular) % LOGEVENT_CIRCULAR_MAX];
+        location = &el->events_circular[(el->circular_first + el->ncircular) % LOGEVENT_CIRCULAR_MAX];
 
     if (*location)
         sfree(*location);
     *location = dupcat(timebuf, string);
-    if (logbox) {
+    if (el->logbox) {
         int count;
-        SendDlgItemMessage(logbox, IDN_LIST, LB_ADDSTRING,
+        SendDlgItemMessage(el->logbox, IDN_LIST, LB_ADDSTRING,
                            0, (LPARAM) *location);
-        count = SendDlgItemMessage(logbox, IDN_LIST, LB_GETCOUNT, 0, 0);
-        SendDlgItemMessage(logbox, IDN_LIST, LB_SETTOPINDEX, count - 1, 0);
+        count = SendDlgItemMessage(el->logbox, IDN_LIST, LB_GETCOUNT, 0, 0);
+        SendDlgItemMessage(el->logbox, IDN_LIST, LB_SETTOPINDEX, count - 1, 0);
 
-        update_logbox_horizontal_extent(logbox);
+        update_logbox_horizontal_extent(el->logbox);
     }
-    if (ninitial < LOGEVENT_INITIAL_MAX) {
-        ninitial++;
-    } else if (ncircular < LOGEVENT_CIRCULAR_MAX) {
-        ncircular++;
-    } else if (ncircular == LOGEVENT_CIRCULAR_MAX) {
-        circular_first = (circular_first + 1) % LOGEVENT_CIRCULAR_MAX;
-        sfree(events_circular[circular_first]);
-        events_circular[circular_first] = dupstr("..");
+    if (el->ninitial < LOGEVENT_INITIAL_MAX) {
+        el->ninitial++;
+    } else if (el->ncircular < LOGEVENT_CIRCULAR_MAX) {
+        el->ncircular++;
+    } else if (el->ncircular == LOGEVENT_CIRCULAR_MAX) {
+        el->circular_first = (el->circular_first + 1) % LOGEVENT_CIRCULAR_MAX;
+        sfree(el->events_circular[el->circular_first]);
+        el->events_circular[el->circular_first] = dupstr("..");
     }
 }
 
@@ -860,12 +883,14 @@ static void win_gui_logging_error(LogPolicy *lp, const char *event)
 
 void showeventlog(HWND hwnd)
 {
-    if (!logbox) {
-        logbox = CreateDialog(hinst, MAKEINTRESOURCE(IDD_LOGBOX),
-                              hwnd, LogProc);
-        ShowWindow(logbox, SW_SHOWNORMAL);
+    WinGuiSeat *wgs = (WinGuiSeat *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    struct EventLogData *el = &wgs->eventlog;
+    if (!el->logbox) {
+        el->logbox = CreateDialogParam(hinst, MAKEINTRESOURCE(IDD_LOGBOX),
+                                       hwnd, LogProc, (LPARAM)el);
+        ShowWindow(el->logbox, SW_SHOWNORMAL);
     }
-    SetActiveWindow(logbox);
+    SetActiveWindow(el->logbox);
 }
 
 void showabout(HWND hwnd)

@@ -2415,6 +2415,8 @@ void cmdline_cleanup(void);
 SeatPromptResult cmdline_get_passwd_input(
     prompts_t *p, cmdline_get_passwd_input_state *state, bool restartable);
 bool cmdline_host_ok(Conf *);
+void cmdline_reset(void);
+char *cmdline_password_swap(char *pw);
 bool cmdline_verbose(void);
 bool cmdline_loaded_session(void);
 

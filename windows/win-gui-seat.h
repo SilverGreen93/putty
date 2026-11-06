@@ -45,6 +45,23 @@ struct _dpi_info {
  * keep a linked list of all live WinGuiSeats, so that cleanups
  * can be done to any that exist.
  */
+#define LOGEVENT_INITIAL_MAX 128
+#define LOGEVENT_CIRCULAR_MAX 128
+
+/* Per-session Event Log contents (dialog.c) */
+struct EventLogData {
+    char *events_initial[LOGEVENT_INITIAL_MAX];
+    char *events_circular[LOGEVENT_CIRCULAR_MAX];
+    int ninitial, ncircular, circular_first;
+    HWND logbox;
+};
+
+/* Host callbacks for a terminal embedded in another application */
+typedef struct PuttyEmbedCallbacks {
+    void (*on_title)(void *ctx, const wchar_t *title);
+    void (*on_closed)(void *ctx, int exitcode);
+} PuttyEmbedCallbacks;
+
 struct WinGuiSeatListNode {
     struct WinGuiSeatListNode *next, *prev;
 };
@@ -146,9 +163,21 @@ struct WinGuiSeat {
     WPARAM last_wm_mousemove_wParam, last_wm_ncmousemove_wParam;
     LPARAM last_wm_mousemove_lParam, last_wm_ncmousemove_lParam;
     wchar_t pending_surrogate;
+
+    struct EventLogData eventlog;
+
+    /* Embedded mode (putty.dll): window is a child of embed_parent */
+    HWND embed_parent;
+    PuttyEmbedCallbacks embed_cb;
+    void *embed_ctx;
+    char *cmdline_password;            /* this session's -pw, if any */
+    int embed_exitcode;
 };
 
 extern const LogPolicyVtable win_gui_logpolicy_vt; /* in dialog.c */
+
+WinGuiSeat *wgs_new(char *cmdline, HWND parent,
+                    const PuttyEmbedCallbacks *cb, void *cbctx, int show);
 
 static inline void wgs_link(WinGuiSeat *wgs)
 {

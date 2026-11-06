@@ -114,6 +114,35 @@ target_link_libraries(putty
 set_target_properties(putty PROPERTIES WIN32_EXECUTABLE ON)
 installed_program(putty)
 
+# PuTTY as a DLL for embedding terminals as child windows of a host
+# application (SuperXPuTTY). See putty-dll.c.
+add_library(putty-embed SHARED
+  window.c
+  putty.c
+  putty-dll.c
+  no-jump-list.c
+  help.c
+  ${CMAKE_SOURCE_DIR}/stubs/no-console.c
+  putty.rc)
+be_list(putty-embed PuTTY SSH SERIAL OTHERBACKENDS)
+add_dependencies(putty-embed generated_licence_h)
+target_compile_definitions(putty-embed PRIVATE PUTTY_DLL)
+target_link_libraries(putty-embed
+  guiterminal guimisc eventloop sshclient otherbackends settings network crypto
+  utils urlhack
+  ${platform_libraries})
+set_target_properties(putty-embed PROPERTIES PREFIX "")
+if(MINGW)
+  # no libgcc DLL dependency next to the host exe
+  target_link_options(putty-embed PRIVATE -static-libgcc)
+endif()
+
+# Run as: test_embed putty-embed.dll  (loads the DLL dynamically)
+add_executable(test_embed test/test_embed.c)
+if(MINGW)
+  target_link_options(test_embed PRIVATE -municode -static-libgcc)
+endif()
+
 add_executable(puttytel
   window.c
   putty.c
