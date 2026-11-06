@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Check out the tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Full history + tags, so we can find the last upstream tag merged in.
           fetch-depth: 0
@@ -58,7 +58,7 @@ jobs:
                            -DestinationPath "dist/${{ steps.name.outputs.zip }}"
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ steps.name.outputs.name }}
           draft: ${{ steps.name.outputs.draft == 'true' }}
