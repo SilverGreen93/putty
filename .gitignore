@@ -6,6 +6,7 @@
 .ninja_deps
 .ninja_log
 build.ninja
+/build/
 /CMakeCache.txt
 CMakeFiles/
 Debug/
