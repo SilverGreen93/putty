@@ -34,8 +34,11 @@ static bool inited;
 static HWND notify_hwnd;
 
 static bool callbacks_posted, callbacks_deferred;
-static HANDLE handle_deferred;
-static bool handle_is_deferred;
+/* Handle activations (NULL = just re-arm) that arrived while PuTTY code
+ * was on the stack. Several can be pending: the signal of an auto-reset
+ * event was consumed by the helper thread, so none may be dropped. */
+static HANDLE handles_deferred[MAXIMUM_WAIT_OBJECTS + 1];
+static int nhandles_deferred;
 
 /* ---------------------------------------------------------------- *
  * Handle-wait helper thread
@@ -54,10 +57,15 @@ static DWORD WINAPI hw_thread_proc(LPVOID param)
         WaitForSingleObject(hw_go, INFINITE);
         DWORD r = WaitForMultipleObjects(hw_n, hw_handles, false, INFINITE);
         bool stopped = (r == WAIT_OBJECT_0);
+        bool failed = (r == WAIT_FAILED);
         HANDLE h = NULL;
         if (r > WAIT_OBJECT_0 && r < WAIT_OBJECT_0 + hw_n)
             h = hw_handles[r - WAIT_OBJECT_0];
         SetEvent(hw_idle);
+        /* On WAIT_FAILED (e.g. a stale handle in the list) back off, so
+         * that re-arming does not spin the UI thread at 100% CPU. */
+        if (failed)
+            Sleep(100);
         /* h == NULL && !stopped means WAIT_FAILED: just ask to re-arm */
         if (!stopped)
             PostMessage(notify_hwnd, WM_PD_HANDLE, (WPARAM)h, 0);
@@ -145,9 +153,13 @@ void putty_code_left(void)
         callbacks_deferred = false;
         post_callbacks();
     }
-    if (handle_is_deferred) {
-        handle_is_deferred = false;
-        PostMessage(notify_hwnd, WM_PD_HANDLE, (WPARAM)handle_deferred, 0);
+    if (nhandles_deferred) {
+        HANDLE pending[MAXIMUM_WAIT_OBJECTS + 1];
+        int n = nhandles_deferred;
+        memcpy(pending, handles_deferred, n * sizeof(HANDLE));
+        nhandles_deferred = 0;
+        for (int i = 0; i < n; i++)
+            PostMessage(notify_hwnd, WM_PD_HANDLE, (WPARAM)pending[i], 0);
     }
 }
 
@@ -187,8 +199,14 @@ static LRESULT CALLBACK notify_wndproc(HWND hwnd, UINT msg,
         if (top_level) {
             hw_service((HANDLE)wParam);
         } else {
-            handle_deferred = (HANDLE)wParam;
-            handle_is_deferred = true;
+            HANDLE h = (HANDLE)wParam;
+            int i;
+            for (i = 0; i < nhandles_deferred; i++)
+                if (handles_deferred[i] == h)
+                    break;
+            if (i == nhandles_deferred &&
+                nhandles_deferred < (int)lenof(handles_deferred))
+                handles_deferred[nhandles_deferred++] = h;
         }
         break;
       default:
@@ -207,36 +225,69 @@ static LRESULT CALLBACK notify_wndproc(HWND hwnd, UINT msg,
 typedef void (__cdecl *putty_title_fn)(void *ctx, const wchar_t *title);
 typedef void (__cdecl *putty_closed_fn)(void *ctx, int exitcode);
 
-/* Returns nonzero on success. Called implicitly by session_create. */
+static void putty_init_undo(void)
+{
+    /* Undo the per-DLL parts of a partially completed putty_init(), so
+     * that it can be retried. putty_process_init() is not undone. */
+    handle_wait_list_changed = NULL;
+    request_callback_notifications(NULL, NULL);
+    winselgui_clear_hwnd();
+    if (notify_hwnd) {
+        DestroyWindow(notify_hwnd);
+        notify_hwnd = NULL;
+    }
+    if (hw_go) { CloseHandle(hw_go); hw_go = NULL; }
+    if (hw_wake) { CloseHandle(hw_wake); hw_wake = NULL; }
+    if (hw_idle) { CloseHandle(hw_idle); hw_idle = NULL; }
+    callbacks_posted = callbacks_deferred = false;
+    nhandles_deferred = 0;
+}
+
+/* Returns nonzero on success. Called implicitly by session_create.
+ * Safe to call again after a failure. */
 PUTTY_API int __cdecl putty_init(void)
 {
+    static bool process_inited, class_registered;
+
     if (inited)
         return 1;
 
-    if (!putty_process_init(dll_hinst, NULL))
-        return 0;
+    if (!process_inited) {
+        if (!putty_process_init(dll_hinst, NULL))
+            return 0;
+        process_inited = true;
+    }
 
-    WNDCLASSW wc;
-    memset(&wc, 0, sizeof(wc));
-    wc.lpfnWndProc = notify_wndproc;
-    wc.hInstance = dll_hinst;
-    wc.lpszClassName = L"PuTTYEmbedNotify";
-    RegisterClassW(&wc);
+    if (!class_registered) {
+        WNDCLASSW wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = notify_wndproc;
+        wc.hInstance = dll_hinst;
+        wc.lpszClassName = L"PuTTYEmbedNotify";
+        if (!RegisterClassW(&wc))
+            return 0;
+        class_registered = true;
+    }
+
     notify_hwnd = CreateWindowW(L"PuTTYEmbedNotify", L"", 0, 0, 0, 0, 0,
                                 HWND_MESSAGE, NULL, dll_hinst, NULL);
-    if (!notify_hwnd)
-        return 0;
-
-    winselgui_set_hwnd(notify_hwnd);
-    request_callback_notifications(notify_callbacks, NULL);
-
     hw_go = CreateEvent(NULL, false, false, NULL);
     hw_wake = CreateEvent(NULL, true, false, NULL);
     hw_idle = CreateEvent(NULL, true, true, NULL);
-    HANDLE th = CreateThread(NULL, 0, hw_thread_proc, NULL, 0, NULL);
-    if (!th)
+    if (!notify_hwnd || !hw_go || !hw_wake || !hw_idle) {
+        putty_init_undo();
         return 0;
+    }
+
+    HANDLE th = CreateThread(NULL, 0, hw_thread_proc, NULL, 0, NULL);
+    if (!th) {
+        putty_init_undo();
+        return 0;
+    }
     CloseHandle(th);
+
+    winselgui_set_hwnd(notify_hwnd);
+    request_callback_notifications(notify_callbacks, NULL);
     handle_wait_list_changed = hw_changed;
     hw_arm();                          /* in case anything is waiting */
 
