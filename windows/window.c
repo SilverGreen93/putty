@@ -160,6 +160,7 @@ DECL_WINDOWS_FUNCTION(static, HMONITOR, MonitorFromWindow, (HWND, DWORD));
 DECL_WINDOWS_FUNCTION(static, HRESULT, GetDpiForMonitor, (HMONITOR hmonitor, enum MONITOR_DPI_TYPE dpiType, UINT *dpiX, UINT *dpiY));
 DECL_WINDOWS_FUNCTION(static, HRESULT, GetSystemMetricsForDpi, (int nIndex, UINT dpi));
 DECL_WINDOWS_FUNCTION(static, HRESULT, AdjustWindowRectExForDpi, (LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi));
+DECL_WINDOWS_FUNCTION(static, UINT, GetDpiForWindow, (HWND hwnd));
 
 static UINT wm_mousewheel = WM_MOUSEWHEEL;
 
@@ -3443,9 +3444,12 @@ static LRESULT WndProcInner(HWND hwnd, UINT message,
       case WM_DPICHANGED_AFTERPARENT:
         /* Only top-level windows get WM_DPICHANGED; an embedded child
          * hears about it here. Reload the fonts at the new DPI and keep
-         * the window size the host gave us. */
-        wgs->dpi_info.cur_dpi.x = wgs->dpi_info.cur_dpi.y = 0;
-        init_dpi_info(wgs);
+         * the window size the host gave us. A child window's DPI is
+         * its top-level parent's, so ask for it directly: the monitor
+         * under the window can be stale for a hidden (background) tab. */
+        wgs->dpi_info.cur_dpi.x = wgs->dpi_info.cur_dpi.y =
+            p_GetDpiForWindow ? (int)p_GetDpiForWindow(hwnd) : 0;
+        init_dpi_info(wgs);            /* fallback if that gave 0 */
         reset_window(wgs, 2);
         return 0;
       case WM_VSCROLL:
@@ -4514,6 +4518,7 @@ static void init_winfuncs(void)
     GET_WINDOWS_FUNCTION_NO_TYPECHECK(shcore_module, GetDpiForMonitor);
     GET_WINDOWS_FUNCTION_NO_TYPECHECK(user32_module, GetSystemMetricsForDpi);
     GET_WINDOWS_FUNCTION_NO_TYPECHECK(user32_module, AdjustWindowRectExForDpi);
+    GET_WINDOWS_FUNCTION_NO_TYPECHECK(user32_module, GetDpiForWindow);
 }
 
 /*
