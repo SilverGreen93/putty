@@ -1,0 +1,38 @@
+name: CI
+
+# Compile-only check on every pull request, so a PR that breaks the
+# build is red before it can be merged. Deliberately does the same
+# configure/build the release workflow does, so this checks the thing
+# that actually gets shipped.
+on:
+  pull_request:
+  # Handy for testing this workflow itself, or for a one-off build.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to the same PR cancels the run it superseded.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v7
+
+      - name: Configure
+        # VS generator is multi-config: the Release config is chosen by
+        # --config at build time, so CMAKE_BUILD_TYPE is not needed here.
+        run: cmake -S . -B build
+
+      - name: Build all targets
+        # No --target: builds ALL_BUILD, so a compile error anywhere in the
+        # tree is caught, not just in the programs that go in a release.
+        # MSBuild parallelises on its own, so no -j is needed.
+        run: cmake --build build --config Release
